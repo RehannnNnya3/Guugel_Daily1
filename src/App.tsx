@@ -1,0 +1,1677 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { ActivityEntry, SyncStatus, Urgency, FinanceEntry, CustomAccount, FinanceCategoryMap } from './types.ts';
+import ActivityForm from './components/ActivityForm.tsx';
+import ActivityCard from './components/ActivityCard.tsx';
+import NotificationToast from './components/NotificationToast.tsx';
+import FinanceDashboard from './components/finance/FinanceDashboard.tsx';
+import FinanceForm from './components/finance/FinanceForm.tsx';
+import { 
+  playChime, 
+  playSuccessSound, 
+  playTickSound 
+} from './utils/audio.ts';
+import { 
+  backupDataToCloud, 
+  fetchFromCloud, 
+  checkServerHealth 
+} from './utils/syncService.ts';
+import { 
+  Plus, 
+  Search, 
+  RefreshCw, 
+  Bell, 
+  BellOff, 
+  Gamepad2, 
+  GraduationCap, 
+  Calendar, 
+  Trash2, 
+  Filter,
+  CheckCircle2,
+  SlidersHorizontal,
+  FolderSync,
+  Clock,
+  LogIn,
+  LogOut,
+  User as UserIcon,
+  CloudLightning,
+  Wallet,
+  Smartphone
+} from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
+
+// Firebase Imports
+import { auth, db } from './lib/firebase.ts';
+import { 
+  onAuthStateChanged, 
+  signOut, 
+  User as FirebaseUser 
+} from 'firebase/auth';
+import { 
+  collection, 
+  doc, 
+  setDoc, 
+  deleteDoc, 
+  onSnapshot, 
+  query, 
+  where,
+  writeBatch
+} from 'firebase/firestore';
+import AuthScreen from './components/AuthScreen.tsx';
+import MobileSyncModal from './components/MobileSyncModal.tsx';
+
+const LOCAL_STORAGE_KEY_ENTRIES = 'catatan_harian_entries';
+const LOCAL_STORAGE_KEY_CATEGORIES = 'catatan_harian_categories';
+const LOCAL_STORAGE_KEY_ACCOUNTS = 'catatan_harian_accounts';
+const LOCAL_STORAGE_KEY_FINANCE_CATS = 'catatan_harian_finance_cats';
+const LOCAL_STORAGE_KEY_FINANCE = 'catatan_harian_finance';
+
+// Initial dummy data to make the app look great on very first load
+
+
+const INITIAL_FINANCE_CATEGORIES: FinanceCategoryMap = {
+  income: ['Gaji', 'Freelance', 'Bonus', 'Transfer Masuk', 'Lainnya'],
+  expense: ['Makan', 'Transport', 'Belanja', 'Tagihan', 'Hiburan', 'Lainnya'],
+  transfer: ['Tarik Tunai', 'Top Up', 'Transfer Rekening']
+};
+
+const INITIAL_ACCOUNTS: CustomAccount[] = [
+  { id: 'cash', name: 'Tunai', type: 'cash' },
+  { id: 'bank_bri', name: 'BRI', type: 'bank' },
+  { id: 'bank_seabank', name: 'SeaBank', type: 'bank' },
+  { id: 'ewallet_dana', name: 'DANA', type: 'ewallet' },
+  { id: 'ewallet_gopay', name: 'GoPay', type: 'ewallet' },
+  { id: 'ewallet_shopeepay', name: 'ShopeePay', type: 'ewallet' },
+  { id: 'ewallet_ovo', name: 'OVO', type: 'ewallet' }
+];
+
+const INITIAL_ENTRIES: ActivityEntry[] = [];
+
+export default function App() {
+  const [activeModule, setActiveModule] = useState<'activity' | 'finance'>('activity');
+  const [entries, setEntries] = useState<ActivityEntry[]>([]);
+  const [financeEntries, setFinanceEntries] = useState<FinanceEntry[]>([]);
+  const [customCategories, setCustomCategories] = useState<string[]>(['Kesehatan', 'Pekerjaan']);
+  const [customAccounts, setCustomAccounts] = useState<CustomAccount[]>(INITIAL_ACCOUNTS);
+  const [financeCategories, setFinanceCategories] = useState<FinanceCategoryMap>(INITIAL_FINANCE_CATEGORIES);
+  
+  // Firebase Auth State
+  const [currentUser, setCurrentUser] = useState<FirebaseUser | null>(null);
+  const [showAuthModal, setShowAuthModal] = useState(false);
+  const [showMobileSyncModal, setShowMobileSyncModal] = useState(false);
+  const [isAuthLoading, setIsAuthLoading] = useState(true);
+  
+  // Filtering & Sorting State
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedCategory, setSelectedCategory] = useState<string>('all');
+  const [selectedUrgency, setSelectedUrgency] = useState<string>('all');
+  const [sortBy, setSortBy] = useState<'urgency' | 'deadline' | 'created'>('deadline');
+
+  // Form State
+  const [isFormOpen, setIsFormOpen] = useState(false);
+  const [editingEntry, setEditingEntry] = useState<ActivityEntry | null>(null);
+  
+  // Finance Form State
+  const [isFinanceFormOpen, setIsFinanceFormOpen] = useState(false);
+  const [editingFinanceEntry, setEditingFinanceEntry] = useState<FinanceEntry | null>(null);
+
+  // Live clock state
+  const [currentTime, setCurrentTime] = useState(new Date());
+
+  // Notification states
+  const [activeNotification, setActiveNotification] = useState<{
+    id: string;
+    entry: ActivityEntry;
+    type: 'alarm' | 'deadline';
+  } | null>(null);
+  const [browserNotificationAllowed, setBrowserNotificationAllowed] = useState(false);
+
+  // Cloud Sync Status State
+  const [syncStatus, setSyncStatus] = useState<SyncStatus>({
+    lastSyncedAt: null,
+    status: 'pending'
+  });
+
+  const syncTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  const customCategoriesRef = useRef(customCategories);
+  const customAccountsRef = useRef(customAccounts);
+  const financeCategoriesRef = useRef(financeCategories);
+  const entriesRef = useRef(entries);
+  const financeEntriesRef = useRef(financeEntries);
+
+  useEffect(() => {
+    customCategoriesRef.current = customCategories;
+  }, [customCategories]);
+  useEffect(() => {
+    customAccountsRef.current = customAccounts;
+  }, [customAccounts]);
+  useEffect(() => {
+    financeCategoriesRef.current = financeCategories;
+  }, [financeCategories]);
+
+  useEffect(() => {
+    entriesRef.current = entries;
+  }, [entries]);
+
+  useEffect(() => {
+    financeEntriesRef.current = financeEntries;
+  }, [financeEntries]);
+
+  // 1. Firebase Auth listener & Real-time Cloud Sync
+  useEffect(() => {
+    // Check notification permissions
+    if (typeof window !== 'undefined' && 'Notification' in window) {
+      setBrowserNotificationAllowed(Notification.permission === 'granted');
+    }
+
+    // Live clock ticks
+    const clockInterval = setInterval(() => {
+      setCurrentTime(new Date());
+    }, 1000);
+
+    let unsubscribeUserDoc: (() => void) | null = null;
+    let unsubscribeEntries: (() => void) | null = null;
+    let unsubscribeFinanceEntries: (() => void) | null = null;
+
+    const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
+      setCurrentUser(user);
+      setIsAuthLoading(false);
+
+      if (user) {
+        // User logged in!
+        setShowAuthModal(false);
+        setSyncStatus({ status: 'syncing', lastSyncedAt: null });
+
+        // Listen to custom categories
+        const userDocRef = doc(db, 'users', user.uid);
+        unsubscribeUserDoc = onSnapshot(userDocRef, (docSnap) => {
+          if (docSnap.exists()) {
+            const data = docSnap.data();
+            if (data.financeCategories) {
+              setFinanceCategories(data.financeCategories);
+              localStorage.setItem(LOCAL_STORAGE_KEY_FINANCE_CATS, JSON.stringify(data.financeCategories));
+            }
+            if (data.customCategories) {
+              setCustomCategories(data.customCategories);
+              localStorage.setItem(LOCAL_STORAGE_KEY_CATEGORIES, JSON.stringify(data.customCategories));
+            }
+            if (data.customAccounts) {
+              setCustomAccounts(data.customAccounts);
+              localStorage.setItem(LOCAL_STORAGE_KEY_ACCOUNTS, JSON.stringify(data.customAccounts));
+            }
+          }
+        });
+
+        // Listen to finance entries
+        const financeQuery = query(collection(db, 'finance_entries'), where('userId', '==', user.uid));
+        unsubscribeFinanceEntries = onSnapshot(financeQuery, async (snap) => {
+          const cF: FinanceEntry[] = [];
+          snap.forEach(d => cF.push({ ...d.data(), id: d.id } as FinanceEntry));
+          setFinanceEntries(cF);
+          localStorage.setItem(LOCAL_STORAGE_KEY_FINANCE, JSON.stringify(cF));
+        });
+
+        // Listen to entries of the current user
+        const entriesQuery = query(
+          collection(db, 'entries'),
+          where('userId', '==', user.uid)
+        );
+
+        unsubscribeEntries = onSnapshot(entriesQuery, async (querySnapshot) => {
+          const cloudEntries: ActivityEntry[] = [];
+          querySnapshot.forEach((docSnap) => {
+            if (!docSnap.id.startsWith('demo-')) {
+              cloudEntries.push({
+                ...docSnap.data(),
+                id: docSnap.id
+              } as ActivityEntry);
+            }
+          });
+
+          const hasMigratedKey = 'has_migrated_' + user.uid;
+          const hasMigrated = localStorage.getItem(hasMigratedKey);
+
+          if (cloudEntries.length === 0 && !hasMigrated) {
+            localStorage.setItem(hasMigratedKey, 'true');
+            // Cloud is empty for this new user, check if we have local entries to import!
+            const storedEntries = localStorage.getItem(LOCAL_STORAGE_KEY_ENTRIES);
+            let localEntriesList: ActivityEntry[] = [];
+            if (storedEntries) {
+              try { localEntriesList = JSON.parse(storedEntries); } catch (e) {}
+            }
+            
+            const storedFinance = localStorage.getItem(LOCAL_STORAGE_KEY_FINANCE);
+            let localFinanceList: FinanceEntry[] = [];
+            if (storedFinance) {
+              try { localFinanceList = JSON.parse(storedFinance); } catch (e) {}
+            }
+
+            // Filter out any default demo entries so we don't spam the cloud, or import them if the user had customized items
+            const customLocalEntries = localEntriesList.filter(e => !e.id.startsWith('demo-'));
+            
+            if (customLocalEntries.length > 0 || localFinanceList.length > 0) {
+              // Upload existing local entries to Firestore!
+              setSyncStatus({ status: 'syncing', lastSyncedAt: null });
+              try {
+                const batch = writeBatch(db);
+                customLocalEntries.forEach(entry => {
+                  const docRef = doc(db, 'entries', entry.id);
+                  batch.set(docRef, { ...entry, userId: user.uid });
+                });
+                localFinanceList.forEach(entry => {
+                  const docRef = doc(db, 'finance_entries', entry.id);
+                  batch.set(docRef, { ...entry, userId: user.uid });
+                });
+                await batch.commit();
+                // Also upload custom categories
+                const userDocRef2 = doc(db, 'users', user.uid);
+                await setDoc(userDocRef2, { customCategories: customCategoriesRef.current }, { merge: true });
+                setSyncStatus({ status: 'synced', lastSyncedAt: new Date().toISOString() });
+              } catch (err) {
+                console.error("Gagal migrasi data lokal ke cloud:", err);
+              }
+              return; // wait for snapshot to trigger again
+            }
+          }
+
+          // Normal Sync
+          localStorage.setItem(hasMigratedKey, 'true');
+          setEntries(cloudEntries);
+          localStorage.setItem(LOCAL_STORAGE_KEY_ENTRIES, JSON.stringify(cloudEntries));
+          setSyncStatus({
+            status: 'synced',
+            lastSyncedAt: new Date().toISOString()
+          });
+        }, (error) => {
+          console.error("Firestore onSnapshot error:", error);
+          setSyncStatus({
+            status: 'error',
+            lastSyncedAt: null,
+            errorMessage: 'Gagal sinkronisasi data cloud.'
+          });
+        });
+
+      } else {
+        // User logged out - clean up active firestore listeners
+        if (unsubscribeUserDoc) unsubscribeUserDoc();
+        if (unsubscribeEntries) unsubscribeEntries();
+        if (unsubscribeFinanceEntries) unsubscribeFinanceEntries();
+
+        // Load local storage entries or fallback to demo
+        const storedEntries = localStorage.getItem(LOCAL_STORAGE_KEY_ENTRIES);
+        const storedCategories = localStorage.getItem(LOCAL_STORAGE_KEY_CATEGORIES);
+        const storedAccounts = localStorage.getItem(LOCAL_STORAGE_KEY_ACCOUNTS);
+        const storedFinCats = localStorage.getItem(LOCAL_STORAGE_KEY_FINANCE_CATS);
+        const storedFinance = localStorage.getItem(LOCAL_STORAGE_KEY_FINANCE);
+
+        if (storedEntries) {
+          try {
+            const parsed = JSON.parse(storedEntries);
+            const cleaned = Array.isArray(parsed) ? parsed.filter((e: ActivityEntry) => !e.id?.startsWith('demo-')) : [];
+            setEntries(cleaned);
+            localStorage.setItem(LOCAL_STORAGE_KEY_ENTRIES, JSON.stringify(cleaned));
+          } catch (e) {
+            setEntries([]);
+          }
+        } else {
+          setEntries([]);
+        }
+
+        if (storedCategories) {
+          try { setCustomCategories(JSON.parse(storedCategories)); } catch (e) {}
+        }
+        if (storedAccounts) {
+          try { setCustomAccounts(JSON.parse(storedAccounts)); } catch (e) {}
+        }
+        if (storedFinCats) {
+          try { setFinanceCategories(JSON.parse(storedFinCats)); } catch (e) { setFinanceCategories(INITIAL_FINANCE_CATEGORIES); }
+        } else {
+          setFinanceCategories(INITIAL_FINANCE_CATEGORIES);
+        }
+        
+        if (storedFinance) {
+          try { setFinanceEntries(JSON.parse(storedFinance)); } catch(e) {}
+        } else {
+          setFinanceEntries([]);
+        }
+
+        setSyncStatus({ status: 'pending', lastSyncedAt: null });
+      }
+    });
+
+    return () => {
+      clearInterval(clockInterval);
+      unsubscribeAuth();
+      if (unsubscribeUserDoc) unsubscribeUserDoc();
+      if (unsubscribeEntries) unsubscribeEntries();
+      if (unsubscribeFinanceEntries) unsubscribeFinanceEntries();
+    };
+  }, []);
+
+  // 2. Alarm checking loop - Runs every 5 seconds to check deadlines and alerts
+  useEffect(() => {
+    const alarmCheckInterval = setInterval(() => {
+      const now = new Date();
+      let stateChanged = false;
+      const currentEntries = entriesRef.current;
+
+      const updatedEntries = currentEntries.map(entry => {
+        if (entry.status === 'completed') return entry;
+
+        // 2a. Check Custom Alarm Time
+        if (entry.reminderEnabled && entry.reminderTime && !entry.reminderSent) {
+          const reminderDate = new Date(entry.reminderTime);
+          
+          // If past or equal to current time, and within last 15 minutes (to avoid stale old triggers)
+          const diffMs = now.getTime() - reminderDate.getTime();
+          if (diffMs >= 0 && diffMs < 15 * 60000) {
+            triggerAlarmNotification(entry, 'alarm');
+            stateChanged = true;
+            return { ...entry, reminderSent: true };
+          }
+        }
+
+        // 2b. Check exact deadline approaching if alarm is on but no specific alarm time was hit, or as fallback
+        if (entry.deadline && !entry.reminderSent) {
+          const deadlineDate = new Date(entry.deadline);
+          const diffMs = deadlineDate.getTime() - now.getTime();
+          
+          // Trigger deadline warning 5 minutes before
+          if (diffMs > 0 && diffMs <= 5 * 60000) {
+            triggerAlarmNotification(entry, 'deadline');
+            stateChanged = true;
+            return { ...entry, reminderSent: true };
+          }
+        }
+
+        return entry;
+      });
+
+      if (stateChanged) {
+        setEntries(updatedEntries);
+        localStorage.setItem(LOCAL_STORAGE_KEY_ENTRIES, JSON.stringify(updatedEntries));
+        // Auto sync with server
+        triggerCloudSyncPush(updatedEntries, customCategoriesRef.current, financeEntriesRef.current, customAccountsRef.current);
+      }
+
+      // 3. Auto-delete completed tasks at 4 AM
+      const getPurgeDateStr = (date: Date) => {
+        const d = new Date(date);
+        if (d.getHours() < 4) {
+          d.setDate(d.getDate() - 1);
+        }
+        return d.toDateString();
+      };
+
+      const currentPurgeDate = getPurgeDateStr(now);
+      const lastPurgeDate = localStorage.getItem('last_purge_date');
+
+      if (lastPurgeDate !== currentPurgeDate) {
+        let hasChanges = false;
+        
+        const nextEntries = currentEntries.filter(entry => {
+          if (entry.status !== 'completed') return true;
+          
+          if (entry.routineDetails && entry.routineDetails.frequency) {
+            // It's a recurring task
+            const { frequency, customResetDays, lastResetAt } = entry.routineDetails;
+            let shouldReset = false;
+            
+            if (frequency === 'daily') {
+              shouldReset = true;
+            } else if (frequency === 'weekly_monday') {
+              // Check if today is Monday
+              const day = now.getDay();
+              if (day === 1 || !lastResetAt) {
+                // If it's monday, or it hasn't been reset before, we reset
+                shouldReset = true;
+              }
+            } else if (frequency === 'custom' && customResetDays) {
+              if (lastResetAt) {
+                const diffTime = Math.abs(now.getTime() - new Date(lastResetAt).getTime());
+                const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)); 
+                if (diffDays >= customResetDays) {
+                  shouldReset = true;
+                }
+              } else {
+                shouldReset = true;
+              }
+            }
+            
+            if (shouldReset) {
+              entry.status = 'pending';
+              entry.routineDetails.lastResetAt = now.toISOString();
+              if (entry.courseDetails && entry.courseDetails.subtasks) {
+                entry.courseDetails.subtasks.forEach(st => st.done = false);
+              }
+              hasChanges = true;
+              return true; // Keep it
+            }
+          }
+          
+          // Non-recurring completed task -> Delete
+          hasChanges = true;
+          return false;
+        });
+
+        if (hasChanges) {
+          setEntries(nextEntries);
+          localStorage.setItem(LOCAL_STORAGE_KEY_ENTRIES, JSON.stringify(nextEntries));
+          triggerCloudSyncPush(nextEntries, customCategoriesRef.current, financeEntriesRef.current, customAccountsRef.current);
+        }
+        // Mark as purged for this "day"
+        localStorage.setItem('last_purge_date', currentPurgeDate);
+      }
+    }, 5000);
+
+    return () => clearInterval(alarmCheckInterval);
+  }, []);
+
+  // Handle playing chimes and showing notification
+  const triggerAlarmNotification = (entry: ActivityEntry, type: 'alarm' | 'deadline') => {
+    playChime();
+    setActiveNotification({
+      id: `${entry.id}-${Date.now()}`,
+      entry,
+      type
+    });
+
+    // Native browser notification
+    if ('Notification' in window && Notification.permission === 'granted') {
+      const title = type === 'alarm' ? `⏰ Pengingat: ${entry.title}` : `🚨 Deadline Dekat: ${entry.title}`;
+      const options = {
+        body: entry.content || `Aktivitas ${entry.category} Anda sudah mendekati waktunya.`,
+        icon: '/favicon.ico',
+        tag: entry.id,
+        requireInteraction: true
+      };
+      new Notification(title, options);
+    }
+  };
+
+  // Browser Notification Perms
+  const requestBrowserNotificationPermission = () => {
+    if ('Notification' in window) {
+      playTickSound();
+      Notification.requestPermission().then(permission => {
+        setBrowserNotificationAllowed(permission === 'granted');
+        if (permission === 'granted') {
+          new Notification('Notifikasi Aktif!', {
+            body: 'Anda akan menerima pengingat harian secara real-time di desktop.',
+            icon: '/favicon.ico'
+          });
+        }
+      });
+    } else {
+      console.warn('Browser Anda tidak mendukung push notification.');
+    }
+  };
+
+  // Helper to sync push (upload state to backend)
+  const triggerCloudSyncPush = async (currentEntries: ActivityEntry[], categories: string[], currentFinance: FinanceEntry[], currentAccounts: CustomAccount[] = customAccountsRef.current, currentFinCats: FinanceCategoryMap = financeCategoriesRef.current) => {
+    setSyncStatus(prev => ({ ...prev, status: 'syncing' }));
+    try {
+      const serverAvailable = await checkServerHealth();
+      if (!serverAvailable) {
+        setSyncStatus(prev => ({ 
+          ...prev, 
+          status: 'pending',
+          errorMessage: 'Server offline, perubahan disimpan secara lokal.'
+        }));
+        return;
+      }
+
+      const syncTime = await backupDataToCloud(currentEntries, currentFinance, categories, currentAccounts, currentFinCats);
+      setSyncStatus({
+        status: 'synced',
+        lastSyncedAt: syncTime
+      });
+    } catch (error: any) {
+      console.warn("Frictionless push backup failed:", error);
+      setSyncStatus(prev => ({ 
+        ...prev, 
+        status: 'error',
+        errorMessage: 'Gagal sinkron otomatis.'
+      }));
+    }
+  };
+
+  // Helper to sync pull (load backup from backend or merge)
+  const triggerCloudSyncPull = async (localEntries: ActivityEntry[]) => {
+    setSyncStatus(prev => ({ ...prev, status: 'syncing' }));
+    try {
+      const serverAvailable = await checkServerHealth();
+      if (!serverAvailable) {
+        setSyncStatus(prev => ({ 
+          ...prev, 
+          status: 'pending',
+          lastSyncedAt: null,
+          errorMessage: 'Server tidak terjangkau. Menggunakan data lokal.'
+        }));
+        return;
+      }
+
+      const cloudData = await fetchFromCloud();
+      if (cloudData && Array.isArray(cloudData.entries)) {
+        // If server data exists, compare timestamps or directly load
+        // For a single-user applet, we replace with cloud backup if cloud is newer or simply trust cloud
+        const cleanEntries = cloudData.entries.filter(e => !e.id?.startsWith('demo-'));
+        setEntries(cleanEntries);
+        localStorage.setItem(LOCAL_STORAGE_KEY_ENTRIES, JSON.stringify(cleanEntries));
+        
+        if (cloudData.customCategories && cloudData.customCategories.length > 0) {
+          setCustomCategories(cloudData.customCategories);
+          localStorage.setItem(LOCAL_STORAGE_KEY_CATEGORIES, JSON.stringify(cloudData.customCategories));
+        }
+        if (cloudData.customAccounts && cloudData.customAccounts.length > 0) {
+          setCustomAccounts(cloudData.customAccounts);
+          localStorage.setItem(LOCAL_STORAGE_KEY_ACCOUNTS, JSON.stringify(cloudData.customAccounts));
+        }
+        if (cloudData.financeCategories) {
+          setFinanceCategories(cloudData.financeCategories);
+          localStorage.setItem(LOCAL_STORAGE_KEY_FINANCE_CATS, JSON.stringify(cloudData.financeCategories));
+        }
+        
+        if (cloudData.financeEntries && cloudData.financeEntries.length > 0) {
+          setFinanceEntries(cloudData.financeEntries);
+          localStorage.setItem(LOCAL_STORAGE_KEY_FINANCE, JSON.stringify(cloudData.financeEntries));
+        }
+
+        setSyncStatus({
+          status: 'synced',
+          lastSyncedAt: cloudData.updatedAt
+        });
+      } else {
+        // If cloud is empty but local is populated, sync local to cloud!
+        await backupDataToCloud(localEntries, financeEntries, customCategories, customAccounts, financeCategories);
+        setSyncStatus({
+          status: 'synced',
+          lastSyncedAt: new Date().toISOString()
+        });
+      }
+    } catch (error: any) {
+      console.error("Cloud data fetch failed:", error);
+      setSyncStatus(prev => ({ 
+        ...prev, 
+        status: 'error',
+        errorMessage: 'Sinkronisasi awan gagal pada startup.'
+      }));
+    }
+  };
+
+  // Save Finance Entry
+  const handleSaveFinanceEntry = async (formOutput: Omit<FinanceEntry, 'id' | 'createdAt' | 'userId'> & { id?: string }) => {
+    playSuccessSound();
+    
+    setIsFinanceFormOpen(false);
+    setEditingFinanceEntry(null);
+
+    let updatedFinance: FinanceEntry[] = [];
+    const newId = formOutput.id || ('finance-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7));
+    const isEditing = !!formOutput.id;
+    const existing = isEditing ? financeEntries.find(e => e.id === formOutput.id) : null;
+    
+    const baseEntry = {
+        ...formOutput,
+        id: newId,
+        createdAt: existing?.createdAt || new Date().toISOString()
+    };
+
+    if (isEditing) {
+        updatedFinance = financeEntries.map(e => e.id === formOutput.id ? { ...e, ...baseEntry } as FinanceEntry : e);
+    } else {
+        updatedFinance = [baseEntry as FinanceEntry, ...financeEntries];
+    }
+
+    setFinanceEntries(updatedFinance);
+
+    if (currentUser) {
+      try {
+        const entryRef = doc(db, 'finance_entries', newId);
+        const cloudEntry: any = { ...baseEntry, userId: currentUser.uid };
+        Object.keys(cloudEntry).forEach(key => cloudEntry[key] === undefined && delete cloudEntry[key]);
+        setDoc(entryRef, cloudEntry).catch(err => console.error("Gagal menyimpan transaksi:", err));
+      } catch (err) {
+        console.error("Gagal menyimpan transaksi ke Firestore:", err);
+      }
+    } else {
+      localStorage.setItem(LOCAL_STORAGE_KEY_FINANCE, JSON.stringify(updatedFinance));
+      triggerCloudSyncPush(entries, customCategories, updatedFinance, customAccounts);
+    }
+  };
+
+  // Delete Finance Entry
+  const handleDeleteFinanceEntry = async (id: string) => {
+    if (confirm('Apakah Anda yakin ingin menghapus transaksi ini?')) {
+      playTickSound();
+      if (currentUser) {
+        try {
+          await deleteDoc(doc(db, 'finance_entries', id));
+        } catch (err) {
+          console.error("Gagal menghapus transaksi dari Firestore:", err);
+        }
+      } else {
+        const updated = financeEntries.filter(entry => entry.id !== id);
+        setFinanceEntries(updated);
+        localStorage.setItem(LOCAL_STORAGE_KEY_FINANCE, JSON.stringify(updated));
+        triggerCloudSyncPush(entries, customCategories, updated, customAccounts);
+      }
+    }
+  };
+
+  // Save / Add handler
+  const handleSaveEntry = async (formOutput: Omit<ActivityEntry, 'id' | 'createdAt'> & { id?: string }) => {
+    playSuccessSound();
+    
+    // Close form immediately for better UX
+    setIsFormOpen(false);
+    setEditingEntry(null);
+
+    let updatedEntries: ActivityEntry[] = [];
+    const newId = formOutput.id || ('task-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7));
+    const isEditing = !!formOutput.id;
+    const existing = isEditing ? entries.find(e => e.id === formOutput.id) : null;
+    
+    const baseEntry = {
+        ...formOutput,
+        id: newId,
+        createdAt: existing?.createdAt || new Date().toISOString(),
+        reminderSent: (existing?.deadline !== formOutput.deadline || existing?.reminderTime !== formOutput.reminderTime) ? false : (existing?.reminderSent || false)
+    };
+
+    if (isEditing) {
+        updatedEntries = entries.map(e => e.id === formOutput.id ? { ...e, ...baseEntry } as ActivityEntry : e);
+    } else {
+        updatedEntries = [baseEntry as ActivityEntry, ...entries];
+    }
+
+    // Optimistic update
+    setEntries(updatedEntries);
+    
+    if (currentUser) {
+      try {
+        const entryRef = doc(db, 'entries', newId);
+        const cloudEntry: any = { ...baseEntry, userId: currentUser.uid };
+        Object.keys(cloudEntry).forEach(key => cloudEntry[key] === undefined && delete cloudEntry[key]);
+        // Do not await, let it sync in background
+        setDoc(entryRef, cloudEntry).catch(err => console.error("Gagal menyimpan ke Firestore:", err));
+      } catch (err) {
+        console.error("Gagal membangun payload Firestore:", err);
+      }
+    } else {
+      localStorage.setItem(LOCAL_STORAGE_KEY_ENTRIES, JSON.stringify(updatedEntries));
+      triggerCloudSyncPush(updatedEntries, customCategories, financeEntries, customAccounts);
+    }
+  };
+
+  // Toggle complete
+  const handleToggleStatus = async (id: string) => {
+    if (currentUser) {
+      try {
+        const entry = entries.find(e => e.id === id);
+        if (entry) {
+          const newStatus = entry.status === 'completed' ? 'pending' : 'completed';
+          if (newStatus === 'completed') {
+            playSuccessSound();
+          } else {
+            playTickSound();
+          }
+          await setDoc(doc(db, 'entries', id), { ...entry, status: newStatus }, { merge: true });
+        }
+      } catch (err) {
+        console.error("Gagal mengubah status di Firestore:", err);
+      }
+    } else {
+      const updated = entries.map(entry => {
+        if (entry.id === id) {
+          const newStatus = entry.status === 'completed' ? 'pending' : 'completed';
+          if (newStatus === 'completed') {
+            playSuccessSound();
+          } else {
+            playTickSound();
+          }
+          return { ...entry, status: newStatus as any };
+        }
+        return entry;
+      });
+
+      setEntries(updated);
+      localStorage.setItem(LOCAL_STORAGE_KEY_ENTRIES, JSON.stringify(updated));
+      triggerCloudSyncPush(updated, customCategories, financeEntries, customAccounts);
+    }
+  };
+
+  // Quick Reschedule: Tunda deadline + alarm push
+  const handleQuickReschedule = async (id: string, hoursToAdd: number) => {
+    playTickSound();
+    if (currentUser) {
+      try {
+        const entry = entries.find(e => e.id === id);
+        if (entry) {
+          const currentDeadline = new Date(entry.deadline);
+          const newDeadline = new Date(currentDeadline.getTime() + hoursToAdd * 3600000);
+          
+          let newReminderTime = entry.reminderTime;
+          if (entry.reminderEnabled && entry.reminderTime) {
+            const currentReminder = new Date(entry.reminderTime);
+            newReminderTime = new Date(currentReminder.getTime() + hoursToAdd * 3600000).toISOString();
+          }
+
+          await setDoc(doc(db, 'entries', id), {
+            ...entry,
+            deadline: newDeadline.toISOString(),
+            reminderTime: newReminderTime,
+            reminderSent: false
+          }, { merge: true });
+        }
+      } catch (err) {
+        console.error("Gagal reschedule di Firestore:", err);
+      }
+    } else {
+      const updated = entries.map(entry => {
+        if (entry.id === id) {
+          const currentDeadline = new Date(entry.deadline);
+          const newDeadline = new Date(currentDeadline.getTime() + hoursToAdd * 3600000);
+          
+          let newReminderTime = entry.reminderTime;
+          if (entry.reminderEnabled && entry.reminderTime) {
+            const currentReminder = new Date(entry.reminderTime);
+            newReminderTime = new Date(currentReminder.getTime() + hoursToAdd * 3600000).toISOString();
+          }
+
+          return {
+            ...entry,
+            deadline: newDeadline.toISOString(),
+            reminderTime: newReminderTime,
+            reminderSent: false
+          };
+        }
+        return entry;
+      });
+
+      setEntries(updated);
+      localStorage.setItem(LOCAL_STORAGE_KEY_ENTRIES, JSON.stringify(updated));
+      triggerCloudSyncPush(updated, customCategories, financeEntries, customAccounts);
+    }
+  };
+
+  // Toggle college subtask directly on Card
+  const handleToggleSubtask = async (entryId: string, subtaskId: string) => {
+    playTickSound();
+    if (currentUser) {
+      try {
+        const entry = entries.find(e => e.id === entryId);
+        if (entry && entry.courseDetails?.subtasks) {
+          const updatedSubtasks = entry.courseDetails.subtasks.map(t => 
+            t.id === subtaskId ? { ...t, done: !t.done } : t
+          );
+          await setDoc(doc(db, 'entries', entryId), {
+            ...entry,
+            courseDetails: {
+              ...entry.courseDetails,
+              subtasks: updatedSubtasks
+            }
+          }, { merge: true });
+        }
+      } catch (err) {
+        console.error("Gagal mengubah subtask di Firestore:", err);
+      }
+    } else {
+      const updated = entries.map(entry => {
+        if (entry.id === entryId && entry.courseDetails?.subtasks) {
+          const updatedSubtasks = entry.courseDetails.subtasks.map(t => 
+            t.id === subtaskId ? { ...t, done: !t.done } : t
+          );
+          return {
+            ...entry,
+            courseDetails: {
+              ...entry.courseDetails,
+              subtasks: updatedSubtasks
+            }
+          };
+        }
+        return entry;
+      });
+
+      setEntries(updated);
+      localStorage.setItem(LOCAL_STORAGE_KEY_ENTRIES, JSON.stringify(updated));
+      triggerCloudSyncPush(updated, customCategories, financeEntries, customAccounts);
+    }
+  };
+
+  // Delete
+  const handleDeleteEntry = async (id: string) => {
+    if (confirm('Apakah Anda yakin ingin menghapus catatan kegiatan ini?')) {
+      playTickSound();
+      if (currentUser) {
+        try {
+          await deleteDoc(doc(db, 'entries', id));
+        } catch (err) {
+          console.error("Gagal menghapus dari Firestore:", err);
+        }
+      } else {
+        const updated = entries.filter(entry => entry.id !== id);
+        setEntries(updated);
+        localStorage.setItem(LOCAL_STORAGE_KEY_ENTRIES, JSON.stringify(updated));
+        triggerCloudSyncPush(updated, customCategories, financeEntries, customAccounts);
+      }
+    }
+  };
+
+  // Add Custom tag
+  const handleAddCategory = async (newCat: string) => {
+    playSuccessSound();
+    const updatedCats = [...customCategories, newCat];
+    setCustomCategories(updatedCats);
+    localStorage.setItem(LOCAL_STORAGE_KEY_CATEGORIES, JSON.stringify(updatedCats));
+
+    if (currentUser) {
+      try {
+        await setDoc(doc(db, 'users', currentUser.uid), { customCategories: updatedCats }, { merge: true });
+      } catch (err) {
+        console.error("Gagal menyimpan kategori ke Firestore:", err);
+      }
+    } else {
+      triggerCloudSyncPush(entries, updatedCats, financeEntries, customAccounts, financeCategories);
+    }
+  };
+
+  // Clear all data
+  const handleClearAllData = async () => {
+    if (confirm('Hapus semua data kegiatan lokal dan setel ulang ke setelan awal?')) {
+      playTickSound();
+      if (currentUser) {
+        try {
+          const batch = writeBatch(db);
+          entries.forEach(entry => {
+            batch.delete(doc(db, 'entries', entry.id));
+          });
+          await batch.commit();
+        } catch (err) {
+          console.error("Gagal menghapus seluruh data dari Firestore:", err);
+        }
+      } else {
+        setEntries(INITIAL_ENTRIES);
+        localStorage.setItem(LOCAL_STORAGE_KEY_ENTRIES, JSON.stringify(INITIAL_ENTRIES));
+        triggerCloudSyncPush(INITIAL_ENTRIES, customCategories, financeEntries, customAccounts);
+      }
+    }
+  };
+
+  // Notification Toast interactions
+  const handleNotificationDismiss = () => {
+    setActiveNotification(null);
+  };
+
+  const handleNotificationComplete = (id: string) => {
+    handleToggleStatus(id);
+    setActiveNotification(null);
+  };
+
+  const handleNotificationSnooze = async (id: string) => {
+    // Postpone the activity by 15 minutes
+    playTickSound();
+    if (currentUser) {
+      try {
+        const entry = entries.find(e => e.id === id);
+        if (entry) {
+          const currentDeadline = new Date();
+          const snoozedDeadline = new Date(currentDeadline.getTime() + 15 * 60000); // 15 mins snooze
+          await setDoc(doc(db, 'entries', id), {
+            ...entry,
+            deadline: snoozedDeadline.toISOString(),
+            reminderTime: snoozedDeadline.toISOString(),
+            reminderSent: false
+          }, { merge: true });
+        }
+      } catch (err) {
+        console.error("Gagal menunda notifikasi di Firestore:", err);
+      }
+    } else {
+      const updated = entries.map(entry => {
+        if (entry.id === id) {
+          const currentDeadline = new Date();
+          const snoozedDeadline = new Date(currentDeadline.getTime() + 15 * 60000); // 15 mins snooze
+          return {
+            ...entry,
+            deadline: snoozedDeadline.toISOString(),
+            reminderTime: snoozedDeadline.toISOString(),
+            reminderSent: false
+          };
+        }
+        return entry;
+      });
+
+      setEntries(updated);
+      localStorage.setItem(LOCAL_STORAGE_KEY_ENTRIES, JSON.stringify(updated));
+      triggerCloudSyncPush(updated, customCategories, financeEntries, customAccounts);
+    }
+    setActiveNotification(null);
+  };
+
+  // 3. Filtering & Sorting Logic
+  const filteredEntries = entries.filter(entry => {
+    // Search query match
+    const matchesSearch = entry.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
+                          entry.content.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                          (entry.courseDetails?.courseName && entry.courseDetails.courseName.toLowerCase().includes(searchQuery.toLowerCase()));
+    
+    // Category match
+    const matchesCategory = selectedCategory === 'all' || entry.category === selectedCategory;
+
+    // Urgency match
+    const matchesUrgency = selectedUrgency === 'all' || entry.urgency === selectedUrgency;
+
+    return matchesSearch && matchesCategory && matchesUrgency;
+  });
+
+  // Sort entries
+  const sortedEntries = [...filteredEntries].sort((a, b) => {
+    if (sortBy === 'urgency') {
+      const urgencyWeight = { urgent: 4, high: 3, medium: 2, low: 1 };
+      const weightA = urgencyWeight[a.urgency] || 0;
+      const weightB = urgencyWeight[b.urgency] || 0;
+      return weightB - weightA;
+    } else if (sortBy === 'deadline') {
+      return new Date(a.deadline).getTime() - new Date(b.deadline).getTime();
+    } else {
+      // created
+      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+    }
+  });
+
+  // Count highlights
+  const countPending = entries.filter(e => e.status !== 'completed').length;
+  const countUrgent = entries.filter(e => e.urgency === 'urgent' && e.status !== 'completed').length;
+  const countCompleted = entries.filter(e => e.status === 'completed').length;
+
+  return (
+    <div className="min-h-screen bg-slate-50 text-slate-900 font-sans antialiased flex flex-col pb-8" id="app_root_layout">
+      
+      {/* 1. Header Navigation Bar & Cloud Sync Panel */}
+      <header className="bg-white border-b border-slate-200 sticky top-0 z-40 shadow-xs" id="app_header">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex items-center justify-between gap-4">
+          
+          {/* Logo & Subtitle */}
+          <div className="flex items-center gap-4">
+            <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center text-white font-extrabold text-xl shadow-sm shadow-indigo-600/10 shrink-0">
+              S
+            </div>
+            <div>
+              <h1 className="text-lg font-bold tracking-tight text-slate-900 flex items-center gap-2">
+                SynchroDiary
+                <span className="text-xs font-normal text-slate-400 hidden sm:inline">| Catatan & Pengingat</span>
+              </h1>
+              <div className="flex items-center gap-2">
+                <span className={`w-2 h-2 rounded-full ${syncStatus.status === 'synced' ? 'bg-green-500 animate-pulse' : syncStatus.status === 'syncing' ? 'bg-indigo-500 animate-spin' : 'bg-amber-500'}`}></span>
+                <span className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">
+                  {syncStatus.status === 'synced' ? 'Cloud Sync Active' : syncStatus.status === 'syncing' ? 'Syncing...' : 'Local Offline'} 
+                  {syncStatus.lastSyncedAt && ` • ${new Date(syncStatus.lastSyncedAt).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}`}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Sync status indicators and Local Time Clock */}
+          <div className="flex items-center gap-3">
+            {/* Live UTC / Local Clock - extremely useful to track deadlines */}
+            <div className="bg-slate-100 px-3 py-1.5 rounded-lg border border-slate-200/50 flex items-center gap-2 text-xs font-semibold text-slate-600 font-mono hidden md:flex">
+              <Clock className="h-3.5 w-3.5 text-slate-400" />
+              <span>
+                {currentTime.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+              </span>
+            </div>
+
+            {/* Firebase Auth Controls */}
+            {isAuthLoading ? (
+              <div className="w-8 h-8 flex items-center justify-center">
+                <div className="w-4 h-4 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
+              </div>
+            ) : currentUser ? (
+              <div className="flex items-center gap-2 bg-slate-50 border border-slate-200/60 pl-2 pr-2.5 py-1 rounded-xl">
+                <div className="w-7 h-7 bg-indigo-100 text-indigo-700 rounded-lg font-bold text-xs flex items-center justify-center border border-indigo-200 shrink-0">
+                  {currentUser.displayName?.[0]?.toUpperCase() || currentUser.email?.[0]?.toUpperCase() || 'U'}
+                </div>
+                <div className="flex flex-col text-left hidden sm:flex max-w-[120px]">
+                  <span className="text-[10px] font-extrabold text-slate-800 truncate leading-tight">
+                    {currentUser.displayName || 'User'}
+                  </span>
+                  <span className="text-[9px] text-slate-500 font-semibold truncate leading-none mt-0.5">
+                    {currentUser.email}
+                  </span>
+                </div>
+                <button
+                  onClick={async () => {
+                    playTickSound();
+                    if (confirm('Apakah Anda yakin ingin keluar dari akun?')) {
+                      await signOut(auth);
+                    }
+                  }}
+                  className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all cursor-pointer ml-1"
+                  title="Keluar dari Akun (Sign Out)"
+                >
+                  <LogOut className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => {
+                  playTickSound();
+                  setShowAuthModal(true);
+                }}
+                className="px-3.5 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-extrabold rounded-xl border border-indigo-200/60 transition-all flex items-center gap-1.5 cursor-pointer shrink-0"
+                id="btn_sign_in"
+              >
+                <LogIn className="h-3.5 w-3.5 text-indigo-600" />
+                <span>SIGN IN</span>
+              </button>
+            )}
+
+            {/* Mobile Sync / QR Code button */}
+            <button
+              onClick={() => {
+                playTickSound();
+                setShowMobileSyncModal(true);
+              }}
+              className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-lg border border-slate-200/60 transition-all flex items-center gap-1.5 cursor-pointer shrink-0"
+              title="Buka di HP via QR Code"
+              id="btn_open_mobile_sync"
+            >
+              <Smartphone className="h-3.5 w-3.5 text-indigo-600" />
+              <span className="hidden sm:inline">Buka di HP</span>
+            </button>
+
+            {/* Cloud manual sync button */}
+            {!currentUser && (
+              <button
+                onClick={() => triggerCloudSyncPull(entries)}
+                className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-lg border border-slate-200/60 transition-all flex items-center gap-1.5 cursor-pointer"
+                title="Sinkronisasi Manual dengan Cloud"
+                id="btn_manual_sync"
+              >
+                <RefreshCw className={`h-3.5 w-3.5 ${syncStatus.status === 'syncing' ? 'animate-spin' : ''}`} />
+                <span className="hidden sm:inline">Sync</span>
+              </button>
+            )}
+          </div>
+
+        </div>
+      </header>
+
+      {/* Module Switcher */}
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-6">
+        <div className="flex bg-slate-200/60 p-1 rounded-xl w-fit">
+          <button
+            onClick={() => { setActiveModule('activity'); playTickSound(); }}
+            className={`px-6 py-2 text-sm font-bold rounded-lg transition-all flex items-center gap-2 ${
+              activeModule === 'activity' ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <Calendar className="w-4 h-4" />
+            Catatan Harian
+          </button>
+          <button
+            onClick={() => { setActiveModule('finance'); playTickSound(); }}
+            className={`px-6 py-2 text-sm font-bold rounded-lg transition-all flex items-center gap-2 ${
+              activeModule === 'finance' ? 'bg-white text-emerald-700 shadow-sm' : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <Wallet className="w-4 h-4" />
+            Catatan Keuangan
+          </button>
+        </div>
+      </div>
+
+      {/* 2. Main content area */}
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 flex-1" id="app_main">
+        {activeModule === 'finance' ? (
+          <FinanceDashboard
+            financeCategories={financeCategories}
+            setFinanceCategories={(cats) => { setFinanceCategories(cats); triggerCloudSyncPush(entries, customCategories, financeEntries, customAccounts, cats); }}
+            entries={financeEntries}
+            customAccounts={customAccounts}
+            setCustomAccounts={setCustomAccounts}
+            triggerCloudSyncPush={(acc) => triggerCloudSyncPush(entries, customCategories, financeEntries, acc, financeCategories)}
+            onAddEntry={() => setIsFinanceFormOpen(true)}
+            onEditEntry={(entry) => {
+              setEditingFinanceEntry(entry);
+              setIsFinanceFormOpen(true);
+            }}
+            onDeleteEntry={handleDeleteFinanceEntry}
+          />
+        ) : (
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+            {/* Left Column (Filters & Sidebar) - 3 of 12 columns */}
+            <aside className="col-span-1 lg:col-span-3 flex flex-col gap-6" id="sidebar_filters">
+          
+          {/* Categories List */}
+          <div className="bg-white rounded-xl border border-slate-200 p-5 space-y-4 shadow-xs">
+            <h3 className="text-[11px] font-bold text-slate-400 uppercase tracking-widest">Categories</h3>
+            <div className="space-y-1">
+              <button
+                onClick={() => { setSelectedCategory('all'); playTickSound(); }}
+                className={`w-full flex items-center gap-3 p-2 rounded-lg cursor-pointer text-xs font-semibold transition-all ${
+                  selectedCategory === 'all'
+                    ? 'bg-indigo-50 text-indigo-700'
+                    : 'text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                <span className="text-sm">📅</span> 
+                <span className="flex-1 text-left">All Schedules</span>
+                <span className="text-[10px] px-2 py-0.5 bg-slate-100 text-slate-500 rounded-full font-bold">{entries.length}</span>
+              </button>
+
+              <button
+                onClick={() => { setSelectedCategory('game'); playTickSound(); }}
+                className={`w-full flex items-center gap-3 p-2 rounded-lg cursor-pointer text-xs font-semibold transition-all ${
+                  selectedCategory === 'game'
+                    ? 'bg-purple-50 text-purple-700'
+                    : 'text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                <span className="text-sm">🎮</span> 
+                <span className="flex-1 text-left">Gaming List</span>
+                <span className="text-[10px] px-2 py-0.5 bg-slate-100 text-slate-500 rounded-full font-bold">
+                  {entries.filter(e => e.category === 'game').length}
+                </span>
+              </button>
+
+              <button
+                onClick={() => { setSelectedCategory('kuliah'); playTickSound(); }}
+                className={`w-full flex items-center gap-3 p-2 rounded-lg cursor-pointer text-xs font-semibold transition-all ${
+                  selectedCategory === 'kuliah'
+                    ? 'bg-blue-50 text-blue-700'
+                    : 'text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                <span className="text-sm">🎓</span> 
+                <span className="flex-1 text-left">University Tasks</span>
+                <span className="text-[10px] px-2 py-0.5 bg-slate-100 text-slate-500 rounded-full font-bold">
+                  {entries.filter(e => e.category === 'kuliah').length}
+                </span>
+              </button>
+
+              <button
+                onClick={() => { setSelectedCategory('rutinitas'); playTickSound(); }}
+                className={`w-full flex items-center gap-3 p-2 rounded-lg cursor-pointer text-xs font-semibold transition-all ${
+                  selectedCategory === 'rutinitas'
+                    ? 'bg-emerald-50 text-emerald-700'
+                    : 'text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                <span className="text-sm">🏠</span> 
+                <span className="flex-1 text-left">Life Routine</span>
+                <span className="text-[10px] px-2 py-0.5 bg-slate-100 text-slate-500 rounded-full font-bold">
+                  {entries.filter(e => e.category === 'rutinitas').length}
+                </span>
+              </button>
+
+              {/* Custom User categories */}
+              {customCategories.map((cat) => (
+                <button
+                  key={cat}
+                  onClick={() => { setSelectedCategory(cat); playTickSound(); }}
+                  className={`w-full flex items-center gap-3 p-2 rounded-lg cursor-pointer text-xs font-semibold transition-all ${
+                    selectedCategory === cat
+                      ? 'bg-slate-100 text-slate-800'
+                      : 'text-slate-600 hover:bg-slate-50'
+                  }`}
+                >
+                  <span className="text-sm">🏷️</span> 
+                  <span className="flex-1 text-left truncate">{cat}</span>
+                  <span className="text-[10px] px-2 py-0.5 bg-slate-200/50 text-slate-600 rounded-full font-bold">
+                    {entries.filter(e => e.category === cat).length}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Urgency Filters */}
+          <div className="bg-white rounded-xl border border-slate-200 p-5 space-y-4 shadow-xs">
+            <h3 className="text-[11px] font-bold text-slate-400 uppercase tracking-widest">Urgency Filter</h3>
+            <div className="space-y-2 text-xs font-medium">
+              {[
+                { val: 'all', label: 'All Urgencies', dot: 'bg-slate-400' },
+                { val: 'urgent', label: 'Critical / Gawat', dot: 'bg-rose-500' },
+                { val: 'high', label: 'High Priority', dot: 'bg-amber-500' },
+                { val: 'medium', label: 'Medium Priority', dot: 'bg-blue-500' },
+                { val: 'low', label: 'Low / Routine', dot: 'bg-emerald-500' }
+              ].map((urg) => (
+                <button
+                  key={urg.val}
+                  onClick={() => { setSelectedUrgency(urg.val); playTickSound(); }}
+                  className={`w-full flex items-center justify-between p-2 rounded-lg text-left transition-all ${
+                    selectedUrgency === urg.val
+                      ? 'bg-slate-100 text-slate-900 font-bold'
+                      : 'text-slate-600 hover:bg-slate-50'
+                  }`}
+                >
+                  <span className="flex items-center gap-3">
+                    <span className={`w-2.5 h-2.5 rounded-full ${urg.dot}`} />
+                    <span>{urg.label}</span>
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Daily Progress Module (Slate-900 Card) */}
+          <div className="p-5 bg-slate-900 rounded-xl text-white shadow-sm flex flex-col justify-between">
+            <div>
+              <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-1">Daily Progress</p>
+              <div className="text-3xl font-extrabold mb-3">
+                {entries.length > 0 ? Math.round((countCompleted / entries.length) * 100) : 0}%
+              </div>
+            </div>
+            <div className="w-full bg-white/20 h-1.5 rounded-full overflow-hidden">
+              <div 
+                className="bg-indigo-400 h-full rounded-full transition-all duration-500 shadow-[0_0_8px_rgba(129,140,248,0.5)]" 
+                style={{ width: `${entries.length > 0 ? (countCompleted / entries.length) * 100 : 0}%` }}
+              />
+            </div>
+            <div className="flex justify-between items-center text-[10px] text-slate-400 mt-3">
+              <span>{countCompleted} Selesai</span>
+              <span>{entries.length} Total</span>
+            </div>
+          </div>
+
+          {/* Notification Settings */}
+          <div className="bg-white rounded-xl border border-slate-200 p-5 space-y-4 shadow-xs">
+            <h3 className="text-[11px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1">
+              <Bell className="h-3 w-3 text-indigo-600" />
+              Push Notifications
+            </h3>
+
+            {browserNotificationAllowed ? (
+              <div className="bg-indigo-50/70 text-indigo-900 p-3 rounded-lg border border-indigo-100 text-[11px] font-medium leading-relaxed">
+                <span className="flex items-center gap-1.5 font-bold text-indigo-800">🟢 Push Active</span>
+                <p className="mt-1 text-slate-500">
+                  Alarm push akan muncul di pojok layar Anda tepat waktu saat deadline tiba.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <p className="text-[11px] text-slate-500 leading-normal">
+                  Izinkan akses notifikasi browser agar alarm push berbunyi tepat waktu.
+                </p>
+                <button
+                  type="button"
+                  onClick={requestBrowserNotificationPermission}
+                  className="w-full py-1.5 px-3 border border-indigo-200 text-indigo-600 hover:bg-indigo-50 active:scale-95 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                  id="btn_request_notif_perm"
+                >
+                  Aktifkan Push Notif
+                </button>
+              </div>
+            )}
+
+            <button
+              type="button"
+              onClick={() => { playChime(); }}
+              className="w-full py-1.5 bg-slate-50 hover:bg-slate-100 text-slate-600 active:scale-95 text-[11px] font-bold rounded-lg border border-slate-200 transition-all flex items-center justify-center gap-1 cursor-pointer"
+              id="btn_test_sound"
+            >
+              🔈 Uji Coba Alarm Sound
+            </button>
+          </div>
+
+          {/* Reset button inside sidebar filter block */}
+          <button
+            onClick={handleClearAllData}
+            className="w-full py-2 text-xs font-bold text-rose-500 hover:bg-rose-50 border border-dashed border-rose-200 rounded-lg transition-all flex items-center justify-center gap-1 cursor-pointer"
+            id="btn_reset_data"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+            Setel Ulang Data Kegiatan
+          </button>
+
+        </aside>
+
+        {/* Right Column (Task Stream Canvas) - 9 of 12 columns */}
+        <section className="col-span-1 lg:col-span-9 space-y-5" id="entries_canvas">
+          
+          {/* Top Actions */}
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+            <div>
+              <h2 className="text-2xl font-bold text-slate-900">Agenda & Aktivitas</h2>
+              <p className="text-sm text-slate-500 font-medium mt-1">Kelola jadwal, tugas, dan rutinitas harian Anda.</p>
+            </div>
+            <button
+              onClick={() => {
+                setEditingEntry(null);
+                setIsFormOpen(true);
+                playTickSound();
+              }}
+              className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold rounded-xl transition-all shadow-md flex items-center gap-2 cursor-pointer shrink-0"
+              id="btn_open_add_form_main"
+            >
+              <Plus className="w-4 h-4" />
+              <span>TAMBAH AKTIVITAS</span>
+            </button>
+          </div>
+
+          {/* Controls: Search & Sort Filters */}
+          <div className="bg-white rounded-2xl border border-slate-100 p-4.5 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-xs">
+            
+            {/* Search Input */}
+            <div className="relative w-full sm:max-w-md">
+              <Search className="absolute left-3 top-3 h-4 w-4 text-slate-400" />
+              <input
+                type="text"
+                placeholder="Cari agenda, tugas kuliah, game, atau deskripsi..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full pl-9 pr-4 py-2 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/15 focus:border-indigo-500 text-slate-800 transition-all"
+                id="input_search"
+              />
+            </div>
+
+            {/* Sorting trigger */}
+            <div className="flex items-center gap-2.5 w-full sm:w-auto justify-end">
+              <SlidersHorizontal className="h-4 w-4 text-slate-400" />
+              <span className="text-xs text-slate-500 font-semibold select-none whitespace-nowrap">Urutkan:</span>
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value as any)}
+                className="py-1.5 px-3 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                id="select_sort_by"
+              >
+                <option value="deadline">⏱️ Batas Waktu Terdekat</option>
+                <option value="urgency">🚨 Tingkat Urgensi</option>
+                <option value="created">📅 Waktu Dibuat (Terbaru)</option>
+              </select>
+            </div>
+
+          </div>
+
+          {/* Active Filtering Info Badge if active */}
+          {(selectedCategory !== 'all' || selectedUrgency !== 'all' || searchQuery) && (
+            <div className="flex items-center justify-between bg-indigo-50/40 border border-indigo-100/50 py-2 px-4 rounded-xl text-xs text-indigo-800">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span>Filter aktif:</span>
+                {selectedCategory !== 'all' && (
+                  <span className="bg-indigo-100 px-2 py-0.5 rounded-md font-bold">Kategori: {selectedCategory}</span>
+                )}
+                {selectedUrgency !== 'all' && (
+                  <span className="bg-indigo-100 px-2 py-0.5 rounded-md font-bold">Urgensi: {selectedUrgency}</span>
+                )}
+                {searchQuery && (
+                  <span className="bg-indigo-100 px-2 py-0.5 rounded-md font-bold">Kata kunci: "{searchQuery}"</span>
+                )}
+              </div>
+              <button 
+                onClick={() => {
+                  setSelectedCategory('all');
+                  setSelectedUrgency('all');
+                  setSearchQuery('');
+                  playTickSound();
+                }}
+                className="text-indigo-600 hover:underline font-bold text-[11px]"
+              >
+                Reset Filter
+              </button>
+            </div>
+          )}
+
+          {/* Task Grid Stream */}
+          {selectedCategory === 'all' && selectedUrgency === 'all' && !searchQuery ? (
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6" id="grid_activity_cards_3_cols">
+              
+              {/* Column 1: DAILY GAMES */}
+              <div className="flex flex-col gap-4">
+                <div className="flex items-center justify-between px-2 py-1 bg-slate-100/50 rounded-lg border border-slate-200/50">
+                  <h2 className="font-extrabold text-slate-800 flex items-center gap-2 text-xs uppercase tracking-wider">
+                    <span className="p-1 bg-purple-100 rounded text-purple-600 text-[10px]">🎮</span> DAILY GAMES
+                  </h2>
+                  <span className="text-[10px] font-extrabold bg-slate-200 text-slate-600 px-2 py-0.5 rounded-full">
+                    {sortedEntries.filter(e => e.category === 'game').length} ITEMS
+                  </span>
+                </div>
+                
+                <div className="space-y-3 flex-1">
+                  <AnimatePresence mode="popLayout">
+                    {sortedEntries.filter(e => e.category === 'game').map((entry) => (
+                      <ActivityCard
+                        key={entry.id}
+                        entry={entry}
+                        onToggleStatus={handleToggleStatus}
+                        onEdit={(item) => {
+                          setEditingEntry(item);
+                          setIsFormOpen(true);
+                          playTickSound();
+                        }}
+                        onDelete={handleDeleteEntry}
+                        onQuickReschedule={handleQuickReschedule}
+                        onToggleSubtask={handleToggleSubtask}
+                      />
+                    ))}
+                  </AnimatePresence>
+                  {sortedEntries.filter(e => e.category === 'game').length === 0 && (
+                    <div className="text-center py-8 px-4 border border-dashed border-slate-200 rounded-xl text-slate-400 text-xs font-semibold bg-white/50">
+                      Tidak ada game hari ini
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Column 2: UNIVERSITY */}
+              <div className="flex flex-col gap-4">
+                <div className="flex items-center justify-between px-2 py-1 bg-slate-100/50 rounded-lg border border-slate-200/50">
+                  <h2 className="font-extrabold text-slate-800 flex items-center gap-2 text-xs uppercase tracking-wider">
+                    <span className="p-1 bg-blue-100 rounded text-blue-600 text-[10px]">🎓</span> UNIVERSITY
+                  </h2>
+                  <span className="text-[10px] font-extrabold bg-slate-200 text-slate-600 px-2 py-0.5 rounded-full">
+                    {sortedEntries.filter(e => e.category === 'kuliah').length} ITEMS
+                  </span>
+                </div>
+
+                <div className="space-y-3 flex-1">
+                  <AnimatePresence mode="popLayout">
+                    {sortedEntries.filter(e => e.category === 'kuliah').map((entry) => (
+                      <ActivityCard
+                        key={entry.id}
+                        entry={entry}
+                        onToggleStatus={handleToggleStatus}
+                        onEdit={(item) => {
+                          setEditingEntry(item);
+                          setIsFormOpen(true);
+                          playTickSound();
+                        }}
+                        onDelete={handleDeleteEntry}
+                        onQuickReschedule={handleQuickReschedule}
+                        onToggleSubtask={handleToggleSubtask}
+                      />
+                    ))}
+                  </AnimatePresence>
+                  {sortedEntries.filter(e => e.category === 'kuliah').length === 0 && (
+                    <div className="text-center py-8 px-4 border border-dashed border-slate-200 rounded-xl text-slate-400 text-xs font-semibold bg-white/50">
+                      Tidak ada tugas kuliah
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Column 3: ROUTINE & OTHERS */}
+              <div className="flex flex-col gap-4 bg-white/60 rounded-xl p-4 border border-slate-200">
+                <div className="flex items-center justify-between px-1">
+                  <h2 className="font-extrabold text-slate-800 flex items-center gap-2 text-xs uppercase tracking-wider">
+                    <span className="p-1 bg-emerald-100 rounded text-emerald-600 text-[10px]">🏠</span> ROUTINE
+                  </h2>
+                  <span className="text-[10px] font-extrabold bg-slate-200 text-slate-600 px-2 py-0.5 rounded-full">
+                    {sortedEntries.filter(e => e.category !== 'game' && e.category !== 'kuliah').length} ITEMS
+                  </span>
+                </div>
+
+                <div className="space-y-3">
+                  <AnimatePresence mode="popLayout">
+                    {sortedEntries.filter(e => e.category !== 'game' && e.category !== 'kuliah').map((entry) => (
+                      <ActivityCard
+                        key={entry.id}
+                        entry={entry}
+                        onToggleStatus={handleToggleStatus}
+                        onEdit={(item) => {
+                          setEditingEntry(item);
+                          setIsFormOpen(true);
+                          playTickSound();
+                        }}
+                        onDelete={handleDeleteEntry}
+                        onQuickReschedule={handleQuickReschedule}
+                        onToggleSubtask={handleToggleSubtask}
+                      />
+                    ))}
+                  </AnimatePresence>
+                  {sortedEntries.filter(e => e.category !== 'game' && e.category !== 'kuliah').length === 0 && (
+                    <div className="text-center py-8 px-4 border border-dashed border-slate-200 rounded-xl text-slate-400 text-xs font-semibold bg-white">
+                      Tidak ada rutinitas harian
+                    </div>
+                  )}
+
+                  <div className="mt-4 flex flex-col gap-2 p-3 bg-slate-50 rounded-xl border-dashed border border-slate-200">
+                    <p className="text-[10px] text-slate-500 font-semibold italic">"A task managed is a worry solved."</p>
+                    <span className="text-[9px] font-extrabold text-indigo-500">— SYSTEM QUOTE</span>
+                  </div>
+                </div>
+              </div>
+
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-5" id="grid_activity_cards">
+              <AnimatePresence mode="popLayout">
+                {sortedEntries.map((entry) => (
+                  <ActivityCard
+                    key={entry.id}
+                    entry={entry}
+                    onToggleStatus={handleToggleStatus}
+                    onEdit={(item) => {
+                      setEditingEntry(item);
+                      setIsFormOpen(true);
+                      playTickSound();
+                    }}
+                    onDelete={handleDeleteEntry}
+                    onQuickReschedule={handleQuickReschedule}
+                    onToggleSubtask={handleToggleSubtask}
+                  />
+                ))}
+              </AnimatePresence>
+            </div>
+          )}
+
+          {/* Empty state illustration/placeholder */}
+          {sortedEntries.length === 0 && (
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              className="bg-white rounded-3xl border border-slate-100 py-16 px-6 text-center space-y-4 max-w-xl mx-auto shadow-xs"
+              id="empty_state_panel"
+            >
+              <div className="h-16 w-16 bg-slate-50 text-slate-400 rounded-full flex items-center justify-center mx-auto border border-slate-100">
+                <Filter className="h-8 w-8" />
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-slate-800">Tidak ada agenda ditemukan</h3>
+                <p className="text-slate-500 text-xs mt-1.5 leading-relaxed">
+                  {entries.length === 0 
+                    ? "Agenda harian Anda masih kosong. Mulailah mencatat agenda game harian, tugas kuliah, atau kegiatan rutinitas nyata Anda!" 
+                    : "Tidak ada agenda yang cocok dengan filter atau kata kunci pencarian Anda. Silakan setel ulang filter."}
+                </p>
+              </div>
+
+              {entries.length === 0 && (
+                <button
+                  onClick={() => { setIsFormOpen(true); playTickSound(); }}
+                  className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs transition-all shadow-md"
+                >
+                  Buat Agenda Pertama Anda
+                </button>
+              )}
+            </motion.div>
+          )}
+
+        </section>
+          </div>
+        )}
+      </main>
+
+      {/* 3. Form Modal Overlay */}
+      <AnimatePresence>
+        {isFormOpen && (
+          <div className="fixed inset-0 bg-slate-950/45 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              transition={{ duration: 0.2 }}
+              className="w-full max-w-2xl"
+            >
+              <ActivityForm
+                initialData={editingEntry}
+                onSave={handleSaveEntry}
+                onCancel={() => {
+                  setIsFormOpen(false);
+                  setEditingEntry(null);
+                  playTickSound();
+                }}
+                customCategories={customCategories}
+                onAddCategory={handleAddCategory}
+              />
+            </motion.div>
+          </div>
+        )}
+        {isFinanceFormOpen && (
+          <FinanceForm
+            financeCategories={financeCategories}
+            customAccounts={customAccounts}
+            initialData={editingFinanceEntry}
+            onSave={handleSaveFinanceEntry}
+            onCancel={() => {
+              setIsFinanceFormOpen(false);
+              setEditingFinanceEntry(null);
+            }}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Auth Screen Modal Overlay */}
+      <AnimatePresence>
+        {showAuthModal && (
+          <AuthScreen 
+            onClose={() => setShowAuthModal(false)}
+            onAuthSuccess={() => setShowAuthModal(false)}
+          />
+        )}
+        {showMobileSyncModal && (
+          <MobileSyncModal
+            currentUser={currentUser}
+            onClose={() => setShowMobileSyncModal(false)}
+            onOpenAuth={() => setShowAuthModal(true)}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* 4. Notification Toast Overlay Trigger */}
+      <NotificationToast
+        activeNotification={activeNotification}
+        onDismiss={handleNotificationDismiss}
+        onComplete={handleNotificationComplete}
+        onSnooze={handleNotificationSnooze}
+      />
+
+      {/* 5. Bottom Status Bar */}
+      <footer className="h-8 bg-slate-100 border-t border-slate-200 px-6 flex items-center justify-between shrink-0 text-slate-500 text-[10px] font-medium z-10">
+        <div className="max-w-7xl mx-auto w-full flex items-center justify-between gap-4">
+          <div className="flex gap-3">
+             <span>{countCompleted} Tasks Completed Today</span>
+             <span className="text-slate-300">|</span>
+             <span>Last Cloud Sync: {syncStatus.lastSyncedAt ? new Date(syncStatus.lastSyncedAt).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) : 'Just Now'}</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+             <div className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse"></div>
+             <span className="font-bold uppercase tracking-tight">System Ready</span>
+          </div>
+        </div>
+      </footer>
+
+    </div>
+  );
+}

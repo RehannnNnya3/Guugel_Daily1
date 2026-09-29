@@ -1,0 +1,8 @@
+{
+  "name": "Remix Catatan Harian \u0026 Pengingat",
+  "description": "Aplikasi catatan harian untuk memantau game harian, tugas kuliah, dan kegiatan rutin dengan prioritas, jadwal deadline, serta sinkronisasi cloud.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
