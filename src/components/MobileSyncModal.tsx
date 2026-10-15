@@ -3,10 +3,10 @@ import { QRCodeSVG } from 'qrcode.react';
 import { motion, AnimatePresence } from 'motion/react';
 import { X, Smartphone, CloudLightning, ArrowRight, ShieldCheck, CheckCircle2 } from 'lucide-react';
 import { playTickSound } from '../utils/audio.ts';
-import { User as FirebaseUser } from 'firebase/auth';
+import { AppUser } from '../services/apiClient.ts';
 
 interface MobileSyncModalProps {
-  currentUser: FirebaseUser | null;
+  currentUser: AppUser | null;
   onClose: () => void;
   onOpenAuth: () => void;
 }

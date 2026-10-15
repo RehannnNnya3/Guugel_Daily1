@@ -22,6 +22,7 @@ import { CustomAccount, FinanceCategoryMap } from '../../types.ts';
 import ManageCategoriesModal from './ManageCategoriesModal.tsx';
 import { Tag } from 'lucide-react';
 import FinanceTransactionListModal from './FinanceTransactionListModal.tsx';
+import SmartBudgetAdvisor from './SmartBudgetAdvisor.tsx';
 import { playTickSound } from '../../utils/audio.ts';
 
 interface FinanceDashboardProps {
@@ -348,6 +349,18 @@ export default function FinanceDashboard({ entries, financeCategories, setFinanc
           </div>
         </div>
       </div>
+
+      {/* Smart Budget & AI Analysis Module */}
+      <SmartBudgetAdvisor
+        selectedMonth={selectedMonth}
+        entries={entries}
+        totalIncome={totalIncome}
+        totalExpense={totalExpense}
+        detailedBalances={detailedBalances}
+        customAccounts={customAccounts}
+        formatRp={formatRp}
+        isBalanceHidden={isBalanceHidden}
+      />
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Chart Section */}

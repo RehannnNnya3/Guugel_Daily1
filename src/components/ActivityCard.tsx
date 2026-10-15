@@ -16,7 +16,8 @@ import {
   XSquare, 
   RotateCcw,
   Bell,
-  BellOff
+  BellOff,
+  Sparkles
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -28,6 +29,7 @@ interface ActivityCardProps {
   onDelete: (id: string) => void;
   onQuickReschedule: (id: string, hoursToAdd: number) => void;
   onToggleSubtask?: (entryId: string, subtaskId: string) => void;
+  onAiBreakdown?: (entryId: string) => void;
 }
 
 export default function ActivityCard({
@@ -36,7 +38,8 @@ export default function ActivityCard({
   onEdit,
   onDelete,
   onQuickReschedule,
-  onToggleSubtask
+  onToggleSubtask,
+  onAiBreakdown
 }: ActivityCardProps) {
   const [expanded, setExpanded] = useState(false);
 
@@ -240,9 +243,20 @@ export default function ActivityCard({
 
         {entry.category === 'kuliah' && entry.courseDetails && (
           <div className="bg-blue-50/20 rounded-xl p-3 border border-blue-100/50 text-xs text-blue-800 space-y-2">
-            <div className="flex items-center justify-between font-semibold">
-              <span>📚 Matkul: {entry.courseDetails.courseName}</span>
-              <span>{collegeProgress()}% Selesai</span>
+            <div className="flex items-center justify-between font-semibold gap-2">
+              <span className="truncate">📚 Matkul: {entry.courseDetails.courseName}</span>
+              <div className="flex items-center gap-1.5 shrink-0">
+                <span>{collegeProgress()}% Selesai</span>
+                {onAiBreakdown && (
+                  <button
+                    onClick={() => onAiBreakdown(entry.id)}
+                    className="p-1 text-indigo-600 hover:text-indigo-800 hover:bg-indigo-50 rounded transition-all cursor-pointer"
+                    title="Pecah langkah subtask dengan AI"
+                  >
+                    <Sparkles className="w-3 h-3" />
+                  </button>
+                )}
+              </div>
             </div>
             
             {/* Progress bar */}
@@ -253,7 +267,7 @@ export default function ActivityCard({
               />
             </div>
 
-            {entry.courseDetails.subtasks && entry.courseDetails.subtasks.length > 0 && (
+            {entry.courseDetails.subtasks && entry.courseDetails.subtasks.length > 0 ? (
               <div className="pt-1 text-[11px] text-blue-700/80 space-y-1">
                 {entry.courseDetails.subtasks.slice(0, 2).map((t) => (
                   <div key={t.id} className="flex items-center gap-1.5">
@@ -272,6 +286,19 @@ export default function ActivityCard({
                     className="text-[10px] text-blue-600 font-bold hover:underline block mt-1"
                   >
                     {expanded ? 'Sembunyikan' : `Tampilkan ${entry.courseDetails.subtasks.length - 2} tugas pecahan lainnya...`}
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div className="pt-1 flex items-center justify-between gap-2">
+                <span className="text-[11px] text-blue-600/70 italic">Belum ada langkah subtask</span>
+                {onAiBreakdown && (
+                  <button
+                    onClick={() => onAiBreakdown(entry.id)}
+                    className="py-1 px-2.5 bg-blue-100 hover:bg-blue-200 text-blue-800 rounded-lg text-[10px] font-bold flex items-center gap-1 transition-all cursor-pointer"
+                  >
+                    <Sparkles className="w-3 h-3 text-indigo-600" />
+                    <span>Auto-Breakdown (AI)</span>
                   </button>
                 )}
               </div>

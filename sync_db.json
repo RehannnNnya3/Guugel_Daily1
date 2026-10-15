@@ -1,0 +1,196 @@
+{
+  "entries": [
+    {
+      "id": "act_test_tugas_01",
+      "userId": "local_user",
+      "title": "Tugas Proyek Basis Data: Desain ERD & Normalisasi",
+      "content": "Membuat skema database relasional lengkap, DDL, dan laporan normalisasi 3NF.",
+      "category": "kuliah",
+      "urgency": "urgent",
+      "status": "in_progress",
+      "deadline": "2026-10-18T14:00:00.000Z",
+      "reminderEnabled": true,
+      "reminderTime": "2026-10-17T09:00:00.000Z",
+      "reminderSent": false,
+      "courseDetails": {
+        "courseName": "Basis Data Lanjut",
+        "subtasks": [
+          { "id": "sub_1", "title": "Membuat diagram relasi ERD", "completed": true },
+          { "id": "sub_2", "title": "Menulis skrip DDL CREATE TABLE & Foreign Key", "completed": true },
+          { "id": "sub_3", "title": "Uji coba query DML & seeding data testing", "completed": false },
+          { "id": "sub_4", "title": "Menyusun laporan akhir PDF", "completed": false }
+        ]
+      },
+      "createdAt": "2026-10-15T08:00:00.000Z"
+    },
+    {
+      "id": "act_test_tugas_02",
+      "userId": "local_user",
+      "title": "Makalah Algoritma & Struktur Data",
+      "content": "Analisis kompleksitas waktu Big-O pada algoritma sorting QuickSort vs MergeSort.",
+      "category": "kuliah",
+      "urgency": "high",
+      "status": "pending",
+      "deadline": "2026-10-21T17:00:00.000Z",
+      "reminderEnabled": true,
+      "reminderTime": "2026-10-20T10:00:00.000Z",
+      "reminderSent": false,
+      "courseDetails": {
+        "courseName": "Algoritma & Pemrograman",
+        "subtasks": [
+          { "id": "sub_2_1", "title": "Mencari referensi jurnal IEEE", "completed": false },
+          { "id": "sub_2_2", "title": "Implementasi benchmark kode program", "completed": false },
+          { "id": "sub_2_3", "title": "Kesimpulan dan cek plagiasi", "completed": false }
+        ]
+      },
+      "createdAt": "2026-10-15T09:00:00.000Z"
+    },
+    {
+      "id": "act_test_game_01",
+      "userId": "local_user",
+      "title": "Daily Quest & Event Farming Genshin",
+      "content": "Selesaikan 4 daily commission di Fontaine dan klaim reward primogem.",
+      "category": "game",
+      "urgency": "low",
+      "status": "pending",
+      "deadline": "2026-10-16T04:00:00.000Z",
+      "reminderEnabled": false,
+      "reminderSent": false,
+      "gameDetails": {
+        "platform": "PC",
+        "dailyQuest": "Selesaikan 4x Daily Commission + Klaim Reward Katheryne",
+        "playtimeMinutes": 45
+      },
+      "createdAt": "2026-10-15T10:00:00.000Z"
+    },
+    {
+      "id": "act_test_routine_01",
+      "userId": "local_user",
+      "title": "Olahraga Pagi & Jogging Ringan",
+      "content": "Jogging keliling kompleks 20 menit dan minum air putih 500ml.",
+      "category": "rutinitas",
+      "urgency": "medium",
+      "status": "completed",
+      "deadline": "2026-10-16T07:00:00.000Z",
+      "reminderEnabled": true,
+      "reminderSent": false,
+      "routineDetails": {
+        "frequency": "daily",
+        "timeOfDay": "06:30"
+      },
+      "createdAt": "2026-10-15T06:00:00.000Z"
+    }
+  ],
+  "financeEntries": [
+    {
+      "id": "fin_test_01",
+      "type": "income",
+      "amount": 3500000,
+      "sourceAccount": "bank_bri",
+      "category": "Gaji",
+      "description": "Gaji bulanan / transfer uang saku kuliah",
+      "date": "2026-10-10T10:00:00.000Z"
+    },
+    {
+      "id": "fin_test_02",
+      "type": "transfer",
+      "amount": 300000,
+      "sourceAccount": "bank_bri",
+      "destinationAccount": "ewallet_dana",
+      "category": "Transfer Antar Rekening",
+      "description": "Top up saldo DANA untuk makan dan jajan harian",
+      "date": "2026-10-11T12:00:00.000Z"
+    },
+    {
+      "id": "fin_test_03",
+      "type": "expense",
+      "amount": 35000,
+      "sourceAccount": "cash",
+      "category": "Makanan",
+      "description": "Makan siang nasi padang dan es teh",
+      "date": "2026-10-13T12:30:00.000Z"
+    },
+    {
+      "id": "fin_test_04",
+      "type": "expense",
+      "amount": 125000,
+      "sourceAccount": "bank_bri",
+      "category": "Pendidikan",
+      "description": "Buku referensi kuliah Basis Data & Pemrograman",
+      "date": "2026-10-14T14:15:00.000Z"
+    },
+    {
+      "id": "fin_test_05",
+      "type": "expense",
+      "amount": 25000,
+      "sourceAccount": "ewallet_dana",
+      "category": "Hiburan",
+      "description": "Kopi santai saat mengerjakan tugas",
+      "date": "2026-10-15T15:00:00.000Z"
+    }
+  ],
+  "customCategories": [
+    "Kesehatan",
+    "Pekerjaan",
+    "Organisasi"
+  ],
+  "customAccounts": [
+    {
+      "id": "cash",
+      "name": "Dompet Tunai",
+      "type": "cash"
+    },
+    {
+      "id": "bank_bri",
+      "name": "Bank BRI",
+      "type": "bank"
+    },
+    {
+      "id": "bank_seabank",
+      "name": "SeaBank",
+      "type": "bank"
+    },
+    {
+      "id": "ewallet_dana",
+      "name": "DANA",
+      "type": "ewallet"
+    },
+    {
+      "id": "ewallet_gopay",
+      "name": "GoPay",
+      "type": "ewallet"
+    },
+    {
+      "id": "ewallet_shopeepay",
+      "name": "ShopeePay",
+      "type": "ewallet"
+    },
+    {
+      "id": "ewallet_ovo",
+      "name": "OVO",
+      "type": "ewallet"
+    }
+  ],
+  "financeCategories": {
+    "income": [
+      "Gaji",
+      "Freelance",
+      "Hadiah",
+      "Investasi"
+    ],
+    "expense": [
+      "Makanan",
+      "Transportasi",
+      "Belanja",
+      "Tagihan",
+      "Hiburan",
+      "Kesehatan",
+      "Pendidikan",
+      "Lainnya"
+    ],
+    "transfer": [
+      "Transfer Antar Rekening"
+    ]
+  },
+  "updatedAt": "2026-10-15T17:59:00.000Z"
+}

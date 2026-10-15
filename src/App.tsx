@@ -39,23 +39,8 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
-// Firebase Imports
-import { auth, db } from './lib/firebase.ts';
-import { 
-  onAuthStateChanged, 
-  signOut, 
-  User as FirebaseUser 
-} from 'firebase/auth';
-import { 
-  collection, 
-  doc, 
-  setDoc, 
-  deleteDoc, 
-  onSnapshot, 
-  query, 
-  where,
-  writeBatch
-} from 'firebase/firestore';
+// Database & REST API Client (MySQL / MariaDB Backend)
+import { apiClient, AppUser, DbStatusInfo } from './services/apiClient.ts';
 import AuthScreen from './components/AuthScreen.tsx';
 import MobileSyncModal from './components/MobileSyncModal.tsx';
 
@@ -94,11 +79,18 @@ export default function App() {
   const [customAccounts, setCustomAccounts] = useState<CustomAccount[]>(INITIAL_ACCOUNTS);
   const [financeCategories, setFinanceCategories] = useState<FinanceCategoryMap>(INITIAL_FINANCE_CATEGORIES);
   
-  // Firebase Auth State
-  const [currentUser, setCurrentUser] = useState<FirebaseUser | null>(null);
+  // Auth & Database State
+  const [currentUser, setCurrentUser] = useState<AppUser | null>(() => {
+    const saved = localStorage.getItem('app_user_session');
+    if (saved) {
+      try { return JSON.parse(saved); } catch (e) {}
+    }
+    return null;
+  });
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [showMobileSyncModal, setShowMobileSyncModal] = useState(false);
-  const [isAuthLoading, setIsAuthLoading] = useState(true);
+  const [isAuthLoading, setIsAuthLoading] = useState(false);
+  const [dbStatus, setDbStatus] = useState<DbStatusInfo | null>(null);
   
   // Filtering & Sorting State
   const [searchQuery, setSearchQuery] = useState('');
@@ -157,7 +149,7 @@ export default function App() {
     financeEntriesRef.current = financeEntries;
   }, [financeEntries]);
 
-  // 1. Firebase Auth listener & Real-time Cloud Sync
+  // 1. Database & REST API Data Loader (MySQL / Local Backend)
   useEffect(() => {
     // Check notification permissions
     if (typeof window !== 'undefined' && 'Notification' in window) {
@@ -169,135 +161,51 @@ export default function App() {
       setCurrentTime(new Date());
     }, 1000);
 
-    let unsubscribeUserDoc: (() => void) | null = null;
-    let unsubscribeEntries: (() => void) | null = null;
-    let unsubscribeFinanceEntries: (() => void) | null = null;
+    // Check DB status
+    apiClient.getDbStatus().then(status => {
+      setDbStatus(status);
+    }).catch(err => {
+      console.warn("Koneksi status DB:", err);
+    });
 
-    const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
-      setCurrentUser(user);
-      setIsAuthLoading(false);
+    const loadAppData = async () => {
+      setIsAuthLoading(true);
+      setSyncStatus({ status: 'syncing', lastSyncedAt: null });
 
-      if (user) {
-        // User logged in!
-        setShowAuthModal(false);
-        setSyncStatus({ status: 'syncing', lastSyncedAt: null });
+      const uid = currentUser?.uid || 'local_user';
+      try {
+        const [acts, fins, sets] = await Promise.all([
+          apiClient.getActivities(uid),
+          apiClient.getFinanceEntries(uid),
+          apiClient.getSettings(uid)
+        ]);
 
-        // Listen to custom categories
-        const userDocRef = doc(db, 'users', user.uid);
-        unsubscribeUserDoc = onSnapshot(userDocRef, (docSnap) => {
-          if (docSnap.exists()) {
-            const data = docSnap.data();
-            if (data.financeCategories) {
-              setFinanceCategories(data.financeCategories);
-              localStorage.setItem(LOCAL_STORAGE_KEY_FINANCE_CATS, JSON.stringify(data.financeCategories));
-            }
-            if (data.customCategories) {
-              setCustomCategories(data.customCategories);
-              localStorage.setItem(LOCAL_STORAGE_KEY_CATEGORIES, JSON.stringify(data.customCategories));
-            }
-            if (data.customAccounts) {
-              setCustomAccounts(data.customAccounts);
-              localStorage.setItem(LOCAL_STORAGE_KEY_ACCOUNTS, JSON.stringify(data.customAccounts));
-            }
-          }
+        const cleanedActs = Array.isArray(acts) ? acts.filter((e: ActivityEntry) => !e.id?.startsWith('demo-')) : [];
+        setEntries(cleanedActs);
+        localStorage.setItem(LOCAL_STORAGE_KEY_ENTRIES, JSON.stringify(cleanedActs));
+
+        setFinanceEntries(fins || []);
+        localStorage.setItem(LOCAL_STORAGE_KEY_FINANCE, JSON.stringify(fins || []));
+
+        if (sets?.customCategories && Array.isArray(sets.customCategories)) {
+          setCustomCategories(sets.customCategories);
+          localStorage.setItem(LOCAL_STORAGE_KEY_CATEGORIES, JSON.stringify(sets.customCategories));
+        }
+        if (sets?.financeCategories) {
+          setFinanceCategories(sets.financeCategories);
+          localStorage.setItem(LOCAL_STORAGE_KEY_FINANCE_CATS, JSON.stringify(sets.financeCategories));
+        }
+        if (sets?.customAccounts && Array.isArray(sets.customAccounts) && sets.customAccounts.length > 0) {
+          setCustomAccounts(sets.customAccounts);
+          localStorage.setItem(LOCAL_STORAGE_KEY_ACCOUNTS, JSON.stringify(sets.customAccounts));
+        }
+
+        setSyncStatus({
+          status: 'synced',
+          lastSyncedAt: new Date().toISOString()
         });
-
-        // Listen to finance entries
-        const financeQuery = query(collection(db, 'finance_entries'), where('userId', '==', user.uid));
-        unsubscribeFinanceEntries = onSnapshot(financeQuery, async (snap) => {
-          const cF: FinanceEntry[] = [];
-          snap.forEach(d => cF.push({ ...d.data(), id: d.id } as FinanceEntry));
-          setFinanceEntries(cF);
-          localStorage.setItem(LOCAL_STORAGE_KEY_FINANCE, JSON.stringify(cF));
-        });
-
-        // Listen to entries of the current user
-        const entriesQuery = query(
-          collection(db, 'entries'),
-          where('userId', '==', user.uid)
-        );
-
-        unsubscribeEntries = onSnapshot(entriesQuery, async (querySnapshot) => {
-          const cloudEntries: ActivityEntry[] = [];
-          querySnapshot.forEach((docSnap) => {
-            if (!docSnap.id.startsWith('demo-')) {
-              cloudEntries.push({
-                ...docSnap.data(),
-                id: docSnap.id
-              } as ActivityEntry);
-            }
-          });
-
-          const hasMigratedKey = 'has_migrated_' + user.uid;
-          const hasMigrated = localStorage.getItem(hasMigratedKey);
-
-          if (cloudEntries.length === 0 && !hasMigrated) {
-            localStorage.setItem(hasMigratedKey, 'true');
-            // Cloud is empty for this new user, check if we have local entries to import!
-            const storedEntries = localStorage.getItem(LOCAL_STORAGE_KEY_ENTRIES);
-            let localEntriesList: ActivityEntry[] = [];
-            if (storedEntries) {
-              try { localEntriesList = JSON.parse(storedEntries); } catch (e) {}
-            }
-            
-            const storedFinance = localStorage.getItem(LOCAL_STORAGE_KEY_FINANCE);
-            let localFinanceList: FinanceEntry[] = [];
-            if (storedFinance) {
-              try { localFinanceList = JSON.parse(storedFinance); } catch (e) {}
-            }
-
-            // Filter out any default demo entries so we don't spam the cloud, or import them if the user had customized items
-            const customLocalEntries = localEntriesList.filter(e => !e.id.startsWith('demo-'));
-            
-            if (customLocalEntries.length > 0 || localFinanceList.length > 0) {
-              // Upload existing local entries to Firestore!
-              setSyncStatus({ status: 'syncing', lastSyncedAt: null });
-              try {
-                const batch = writeBatch(db);
-                customLocalEntries.forEach(entry => {
-                  const docRef = doc(db, 'entries', entry.id);
-                  batch.set(docRef, { ...entry, userId: user.uid });
-                });
-                localFinanceList.forEach(entry => {
-                  const docRef = doc(db, 'finance_entries', entry.id);
-                  batch.set(docRef, { ...entry, userId: user.uid });
-                });
-                await batch.commit();
-                // Also upload custom categories
-                const userDocRef2 = doc(db, 'users', user.uid);
-                await setDoc(userDocRef2, { customCategories: customCategoriesRef.current }, { merge: true });
-                setSyncStatus({ status: 'synced', lastSyncedAt: new Date().toISOString() });
-              } catch (err) {
-                console.error("Gagal migrasi data lokal ke cloud:", err);
-              }
-              return; // wait for snapshot to trigger again
-            }
-          }
-
-          // Normal Sync
-          localStorage.setItem(hasMigratedKey, 'true');
-          setEntries(cloudEntries);
-          localStorage.setItem(LOCAL_STORAGE_KEY_ENTRIES, JSON.stringify(cloudEntries));
-          setSyncStatus({
-            status: 'synced',
-            lastSyncedAt: new Date().toISOString()
-          });
-        }, (error) => {
-          console.error("Firestore onSnapshot error:", error);
-          setSyncStatus({
-            status: 'error',
-            lastSyncedAt: null,
-            errorMessage: 'Gagal sinkronisasi data cloud.'
-          });
-        });
-
-      } else {
-        // User logged out - clean up active firestore listeners
-        if (unsubscribeUserDoc) unsubscribeUserDoc();
-        if (unsubscribeEntries) unsubscribeEntries();
-        if (unsubscribeFinanceEntries) unsubscribeFinanceEntries();
-
-        // Load local storage entries or fallback to demo
+      } catch (err: any) {
+        console.warn("Gagal memuat dari API, beralih ke cache lokal:", err);
         const storedEntries = localStorage.getItem(LOCAL_STORAGE_KEY_ENTRIES);
         const storedCategories = localStorage.getItem(LOCAL_STORAGE_KEY_CATEGORIES);
         const storedAccounts = localStorage.getItem(LOCAL_STORAGE_KEY_ACCOUNTS);
@@ -309,7 +217,6 @@ export default function App() {
             const parsed = JSON.parse(storedEntries);
             const cleaned = Array.isArray(parsed) ? parsed.filter((e: ActivityEntry) => !e.id?.startsWith('demo-')) : [];
             setEntries(cleaned);
-            localStorage.setItem(LOCAL_STORAGE_KEY_ENTRIES, JSON.stringify(cleaned));
           } catch (e) {
             setEntries([]);
           }
@@ -335,18 +242,18 @@ export default function App() {
           setFinanceEntries([]);
         }
 
-        setSyncStatus({ status: 'pending', lastSyncedAt: null });
+        setSyncStatus({ status: 'synced', lastSyncedAt: new Date().toISOString() });
+      } finally {
+        setIsAuthLoading(false);
       }
-    });
+    };
+
+    loadAppData();
 
     return () => {
       clearInterval(clockInterval);
-      unsubscribeAuth();
-      if (unsubscribeUserDoc) unsubscribeUserDoc();
-      if (unsubscribeEntries) unsubscribeEntries();
-      if (unsubscribeFinanceEntries) unsubscribeFinanceEntries();
     };
-  }, []);
+  }, [currentUser]);
 
   // 2. Alarm checking loop - Runs every 5 seconds to check deadlines and alerts
   useEffect(() => {
@@ -623,18 +530,16 @@ export default function App() {
         updatedFinance = [baseEntry as FinanceEntry, ...financeEntries];
     }
 
-    setFinanceEntries(updatedFinance);
-
-    if (currentUser) {
-      try {
-        const entryRef = doc(db, 'finance_entries', newId);
-        const cloudEntry: any = { ...baseEntry, userId: currentUser.uid };
-        Object.keys(cloudEntry).forEach(key => cloudEntry[key] === undefined && delete cloudEntry[key]);
-        setDoc(entryRef, cloudEntry).catch(err => console.error("Gagal menyimpan transaksi:", err));
-      } catch (err) {
-        console.error("Gagal menyimpan transaksi ke Firestore:", err);
+    const uid = currentUser?.uid || 'local_user';
+    try {
+      if (isEditing) {
+        await apiClient.updateFinanceEntry(newId, baseEntry, uid);
+      } else {
+        await apiClient.createFinanceEntry(baseEntry, uid);
       }
-    } else {
+      setSyncStatus({ status: 'synced', lastSyncedAt: new Date().toISOString() });
+    } catch (err) {
+      console.error("Gagal menyimpan transaksi ke database:", err);
       localStorage.setItem(LOCAL_STORAGE_KEY_FINANCE, JSON.stringify(updatedFinance));
       triggerCloudSyncPush(entries, customCategories, updatedFinance, customAccounts);
     }
@@ -644,16 +549,16 @@ export default function App() {
   const handleDeleteFinanceEntry = async (id: string) => {
     if (confirm('Apakah Anda yakin ingin menghapus transaksi ini?')) {
       playTickSound();
-      if (currentUser) {
-        try {
-          await deleteDoc(doc(db, 'finance_entries', id));
-        } catch (err) {
-          console.error("Gagal menghapus transaksi dari Firestore:", err);
-        }
-      } else {
-        const updated = financeEntries.filter(entry => entry.id !== id);
-        setFinanceEntries(updated);
-        localStorage.setItem(LOCAL_STORAGE_KEY_FINANCE, JSON.stringify(updated));
+      const updated = financeEntries.filter(entry => entry.id !== id);
+      setFinanceEntries(updated);
+      localStorage.setItem(LOCAL_STORAGE_KEY_FINANCE, JSON.stringify(updated));
+
+      const uid = currentUser?.uid || 'local_user';
+      try {
+        await apiClient.deleteFinanceEntry(id, uid);
+        setSyncStatus({ status: 'synced', lastSyncedAt: new Date().toISOString() });
+      } catch (err) {
+        console.error("Gagal menghapus transaksi dari database:", err);
         triggerCloudSyncPush(entries, customCategories, updated, customAccounts);
       }
     }
@@ -687,155 +592,156 @@ export default function App() {
 
     // Optimistic update
     setEntries(updatedEntries);
+    localStorage.setItem(LOCAL_STORAGE_KEY_ENTRIES, JSON.stringify(updatedEntries));
     
-    if (currentUser) {
-      try {
-        const entryRef = doc(db, 'entries', newId);
-        const cloudEntry: any = { ...baseEntry, userId: currentUser.uid };
-        Object.keys(cloudEntry).forEach(key => cloudEntry[key] === undefined && delete cloudEntry[key]);
-        // Do not await, let it sync in background
-        setDoc(entryRef, cloudEntry).catch(err => console.error("Gagal menyimpan ke Firestore:", err));
-      } catch (err) {
-        console.error("Gagal membangun payload Firestore:", err);
+    const uid = currentUser?.uid || 'local_user';
+    try {
+      if (isEditing) {
+        await apiClient.updateActivity(newId, baseEntry, uid);
+      } else {
+        await apiClient.createActivity(baseEntry, uid);
       }
-    } else {
-      localStorage.setItem(LOCAL_STORAGE_KEY_ENTRIES, JSON.stringify(updatedEntries));
+      setSyncStatus({ status: 'synced', lastSyncedAt: new Date().toISOString() });
+    } catch (err) {
+      console.error("Gagal menyimpan kegiatan ke database:", err);
       triggerCloudSyncPush(updatedEntries, customCategories, financeEntries, customAccounts);
     }
   };
 
   // Toggle complete
   const handleToggleStatus = async (id: string) => {
-    if (currentUser) {
-      try {
-        const entry = entries.find(e => e.id === id);
-        if (entry) {
-          const newStatus = entry.status === 'completed' ? 'pending' : 'completed';
-          if (newStatus === 'completed') {
-            playSuccessSound();
-          } else {
-            playTickSound();
-          }
-          await setDoc(doc(db, 'entries', id), { ...entry, status: newStatus }, { merge: true });
-        }
-      } catch (err) {
-        console.error("Gagal mengubah status di Firestore:", err);
-      }
-    } else {
-      const updated = entries.map(entry => {
-        if (entry.id === id) {
-          const newStatus = entry.status === 'completed' ? 'pending' : 'completed';
-          if (newStatus === 'completed') {
-            playSuccessSound();
-          } else {
-            playTickSound();
-          }
-          return { ...entry, status: newStatus as any };
-        }
-        return entry;
-      });
+    const entry = entries.find(e => e.id === id);
+    if (!entry) return;
 
-      setEntries(updated);
-      localStorage.setItem(LOCAL_STORAGE_KEY_ENTRIES, JSON.stringify(updated));
-      triggerCloudSyncPush(updated, customCategories, financeEntries, customAccounts);
+    const newStatus = entry.status === 'completed' ? 'pending' : 'completed';
+    if (newStatus === 'completed') {
+      playSuccessSound();
+    } else {
+      playTickSound();
+    }
+
+    const updated = entries.map(e => e.id === id ? { ...e, status: newStatus as any } : e);
+    setEntries(updated);
+    localStorage.setItem(LOCAL_STORAGE_KEY_ENTRIES, JSON.stringify(updated));
+
+    const uid = currentUser?.uid || 'local_user';
+    try {
+      await apiClient.updateActivity(id, { status: newStatus as any }, uid);
+      setSyncStatus({ status: 'synced', lastSyncedAt: new Date().toISOString() });
+    } catch (err) {
+      console.error("Gagal mengubah status di database:", err);
     }
   };
 
   // Quick Reschedule: Tunda deadline + alarm push
   const handleQuickReschedule = async (id: string, hoursToAdd: number) => {
     playTickSound();
-    if (currentUser) {
-      try {
-        const entry = entries.find(e => e.id === id);
-        if (entry) {
-          const currentDeadline = new Date(entry.deadline);
-          const newDeadline = new Date(currentDeadline.getTime() + hoursToAdd * 3600000);
-          
-          let newReminderTime = entry.reminderTime;
-          if (entry.reminderEnabled && entry.reminderTime) {
-            const currentReminder = new Date(entry.reminderTime);
-            newReminderTime = new Date(currentReminder.getTime() + hoursToAdd * 3600000).toISOString();
-          }
+    const entry = entries.find(e => e.id === id);
+    if (!entry) return;
 
-          await setDoc(doc(db, 'entries', id), {
-            ...entry,
-            deadline: newDeadline.toISOString(),
-            reminderTime: newReminderTime,
-            reminderSent: false
-          }, { merge: true });
-        }
-      } catch (err) {
-        console.error("Gagal reschedule di Firestore:", err);
-      }
-    } else {
-      const updated = entries.map(entry => {
-        if (entry.id === id) {
-          const currentDeadline = new Date(entry.deadline);
-          const newDeadline = new Date(currentDeadline.getTime() + hoursToAdd * 3600000);
-          
-          let newReminderTime = entry.reminderTime;
-          if (entry.reminderEnabled && entry.reminderTime) {
-            const currentReminder = new Date(entry.reminderTime);
-            newReminderTime = new Date(currentReminder.getTime() + hoursToAdd * 3600000).toISOString();
-          }
+    const currentDeadline = new Date(entry.deadline);
+    const newDeadline = new Date(currentDeadline.getTime() + hoursToAdd * 3600000);
+    
+    let newReminderTime = entry.reminderTime;
+    if (entry.reminderEnabled && entry.reminderTime) {
+      const currentReminder = new Date(entry.reminderTime);
+      newReminderTime = new Date(currentReminder.getTime() + hoursToAdd * 3600000).toISOString();
+    }
 
-          return {
-            ...entry,
-            deadline: newDeadline.toISOString(),
-            reminderTime: newReminderTime,
-            reminderSent: false
-          };
-        }
-        return entry;
-      });
+    const patch = {
+      deadline: newDeadline.toISOString(),
+      reminderTime: newReminderTime,
+      reminderSent: false
+    };
 
-      setEntries(updated);
-      localStorage.setItem(LOCAL_STORAGE_KEY_ENTRIES, JSON.stringify(updated));
-      triggerCloudSyncPush(updated, customCategories, financeEntries, customAccounts);
+    const updated = entries.map(e => e.id === id ? { ...e, ...patch } : e);
+    setEntries(updated);
+    localStorage.setItem(LOCAL_STORAGE_KEY_ENTRIES, JSON.stringify(updated));
+
+    const uid = currentUser?.uid || 'local_user';
+    try {
+      await apiClient.updateActivity(id, patch, uid);
+      setSyncStatus({ status: 'synced', lastSyncedAt: new Date().toISOString() });
+    } catch (err) {
+      console.error("Gagal reschedule di database:", err);
     }
   };
 
   // Toggle college subtask directly on Card
   const handleToggleSubtask = async (entryId: string, subtaskId: string) => {
     playTickSound();
-    if (currentUser) {
-      try {
-        const entry = entries.find(e => e.id === entryId);
-        if (entry && entry.courseDetails?.subtasks) {
-          const updatedSubtasks = entry.courseDetails.subtasks.map(t => 
-            t.id === subtaskId ? { ...t, done: !t.done } : t
-          );
-          await setDoc(doc(db, 'entries', entryId), {
-            ...entry,
-            courseDetails: {
-              ...entry.courseDetails,
-              subtasks: updatedSubtasks
-            }
-          }, { merge: true });
-        }
-      } catch (err) {
-        console.error("Gagal mengubah subtask di Firestore:", err);
-      }
-    } else {
-      const updated = entries.map(entry => {
-        if (entry.id === entryId && entry.courseDetails?.subtasks) {
-          const updatedSubtasks = entry.courseDetails.subtasks.map(t => 
-            t.id === subtaskId ? { ...t, done: !t.done } : t
-          );
-          return {
-            ...entry,
-            courseDetails: {
-              ...entry.courseDetails,
-              subtasks: updatedSubtasks
-            }
-          };
-        }
-        return entry;
-      });
+    const entry = entries.find(e => e.id === entryId);
+    if (!entry || !entry.courseDetails?.subtasks) return;
 
-      setEntries(updated);
-      localStorage.setItem(LOCAL_STORAGE_KEY_ENTRIES, JSON.stringify(updated));
-      triggerCloudSyncPush(updated, customCategories, financeEntries, customAccounts);
+    const updatedSubtasks = entry.courseDetails.subtasks.map(t => 
+      t.id === subtaskId ? { ...t, done: !t.done } : t
+    );
+
+    const patch = {
+      courseDetails: {
+        ...entry.courseDetails,
+        subtasks: updatedSubtasks
+      }
+    };
+
+    const updated = entries.map(e => e.id === entryId ? { ...e, ...patch } : e);
+    setEntries(updated);
+    localStorage.setItem(LOCAL_STORAGE_KEY_ENTRIES, JSON.stringify(updated));
+
+    const uid = currentUser?.uid || 'local_user';
+    try {
+      await apiClient.updateActivity(entryId, patch, uid);
+    } catch (err) {
+      console.error("Gagal mengubah subtask di database:", err);
+    }
+  };
+
+  // AI Auto-Breakdown for university tasks directly on Card
+  const handleAiBreakdownTask = async (entryId: string) => {
+    const entry = entries.find(e => e.id === entryId);
+    if (!entry) return;
+    playTickSound();
+    try {
+      const res = await fetch('/api/ai/breakdown-task', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          courseName: entry.courseDetails?.courseName || entry.title,
+          title: entry.title,
+          content: entry.content
+        })
+      });
+      if (!res.ok) throw new Error('AI breakdown error');
+      const data = await res.json();
+      if (Array.isArray(data.subtasks) && data.subtasks.length > 0) {
+        const newSubtasks = data.subtasks.map((st: { text: string }, idx: number) => ({
+          id: `ai-${Date.now()}-${idx}`,
+          text: st.text,
+          done: false
+        }));
+
+        playSuccessSound();
+
+        const patch = {
+          courseDetails: {
+            courseName: entry.courseDetails?.courseName || entry.title,
+            subtasks: newSubtasks
+          }
+        };
+
+        const updated = entries.map(e => e.id === entryId ? { ...e, ...patch } : e);
+        setEntries(updated);
+        localStorage.setItem(LOCAL_STORAGE_KEY_ENTRIES, JSON.stringify(updated));
+
+        const uid = currentUser?.uid || 'local_user';
+        try {
+          await apiClient.updateActivity(entryId, patch, uid);
+        } catch (err) {
+          console.error("Gagal menyimpan subtask ke database:", err);
+        }
+      }
+    } catch (err) {
+      console.error("Gagal auto-breakdown:", err);
     }
   };
 
@@ -843,16 +749,16 @@ export default function App() {
   const handleDeleteEntry = async (id: string) => {
     if (confirm('Apakah Anda yakin ingin menghapus catatan kegiatan ini?')) {
       playTickSound();
-      if (currentUser) {
-        try {
-          await deleteDoc(doc(db, 'entries', id));
-        } catch (err) {
-          console.error("Gagal menghapus dari Firestore:", err);
-        }
-      } else {
-        const updated = entries.filter(entry => entry.id !== id);
-        setEntries(updated);
-        localStorage.setItem(LOCAL_STORAGE_KEY_ENTRIES, JSON.stringify(updated));
+      const updated = entries.filter(entry => entry.id !== id);
+      setEntries(updated);
+      localStorage.setItem(LOCAL_STORAGE_KEY_ENTRIES, JSON.stringify(updated));
+
+      const uid = currentUser?.uid || 'local_user';
+      try {
+        await apiClient.deleteActivity(id, uid);
+        setSyncStatus({ status: 'synced', lastSyncedAt: new Date().toISOString() });
+      } catch (err) {
+        console.error("Gagal menghapus dari database:", err);
         triggerCloudSyncPush(updated, customCategories, financeEntries, customAccounts);
       }
     }
@@ -865,13 +771,12 @@ export default function App() {
     setCustomCategories(updatedCats);
     localStorage.setItem(LOCAL_STORAGE_KEY_CATEGORIES, JSON.stringify(updatedCats));
 
-    if (currentUser) {
-      try {
-        await setDoc(doc(db, 'users', currentUser.uid), { customCategories: updatedCats }, { merge: true });
-      } catch (err) {
-        console.error("Gagal menyimpan kategori ke Firestore:", err);
-      }
-    } else {
+    const uid = currentUser?.uid || 'local_user';
+    try {
+      await apiClient.saveSettings({ customCategories: updatedCats }, uid);
+      setSyncStatus({ status: 'synced', lastSyncedAt: new Date().toISOString() });
+    } catch (err) {
+      console.error("Gagal menyimpan kategori ke database:", err);
       triggerCloudSyncPush(entries, updatedCats, financeEntries, customAccounts, financeCategories);
     }
   };
@@ -880,21 +785,17 @@ export default function App() {
   const handleClearAllData = async () => {
     if (confirm('Hapus semua data kegiatan lokal dan setel ulang ke setelan awal?')) {
       playTickSound();
-      if (currentUser) {
-        try {
-          const batch = writeBatch(db);
-          entries.forEach(entry => {
-            batch.delete(doc(db, 'entries', entry.id));
-          });
-          await batch.commit();
-        } catch (err) {
-          console.error("Gagal menghapus seluruh data dari Firestore:", err);
+      const uid = currentUser?.uid || 'local_user';
+      try {
+        for (const entry of entries) {
+          await apiClient.deleteActivity(entry.id, uid);
         }
-      } else {
-        setEntries(INITIAL_ENTRIES);
-        localStorage.setItem(LOCAL_STORAGE_KEY_ENTRIES, JSON.stringify(INITIAL_ENTRIES));
-        triggerCloudSyncPush(INITIAL_ENTRIES, customCategories, financeEntries, customAccounts);
+      } catch (err) {
+        console.error("Gagal menghapus seluruh data kegiatan:", err);
       }
+      setEntries(INITIAL_ENTRIES);
+      localStorage.setItem(LOCAL_STORAGE_KEY_ENTRIES, JSON.stringify(INITIAL_ENTRIES));
+      setSyncStatus({ status: 'synced', lastSyncedAt: new Date().toISOString() });
     }
   };
 
@@ -911,40 +812,26 @@ export default function App() {
   const handleNotificationSnooze = async (id: string) => {
     // Postpone the activity by 15 minutes
     playTickSound();
-    if (currentUser) {
-      try {
-        const entry = entries.find(e => e.id === id);
-        if (entry) {
-          const currentDeadline = new Date();
-          const snoozedDeadline = new Date(currentDeadline.getTime() + 15 * 60000); // 15 mins snooze
-          await setDoc(doc(db, 'entries', id), {
-            ...entry,
-            deadline: snoozedDeadline.toISOString(),
-            reminderTime: snoozedDeadline.toISOString(),
-            reminderSent: false
-          }, { merge: true });
-        }
-      } catch (err) {
-        console.error("Gagal menunda notifikasi di Firestore:", err);
-      }
-    } else {
-      const updated = entries.map(entry => {
-        if (entry.id === id) {
-          const currentDeadline = new Date();
-          const snoozedDeadline = new Date(currentDeadline.getTime() + 15 * 60000); // 15 mins snooze
-          return {
-            ...entry,
-            deadline: snoozedDeadline.toISOString(),
-            reminderTime: snoozedDeadline.toISOString(),
-            reminderSent: false
-          };
-        }
-        return entry;
-      });
+    const entry = entries.find(e => e.id === id);
+    if (!entry) return;
 
-      setEntries(updated);
-      localStorage.setItem(LOCAL_STORAGE_KEY_ENTRIES, JSON.stringify(updated));
-      triggerCloudSyncPush(updated, customCategories, financeEntries, customAccounts);
+    const currentDeadline = new Date();
+    const snoozedDeadline = new Date(currentDeadline.getTime() + 15 * 60000); // 15 mins snooze
+    const patch = {
+      deadline: snoozedDeadline.toISOString(),
+      reminderTime: snoozedDeadline.toISOString(),
+      reminderSent: false
+    };
+
+    const updated = entries.map(e => e.id === id ? { ...e, ...patch } : e);
+    setEntries(updated);
+    localStorage.setItem(LOCAL_STORAGE_KEY_ENTRIES, JSON.stringify(updated));
+
+    const uid = currentUser?.uid || 'local_user';
+    try {
+      await apiClient.updateActivity(id, patch, uid);
+    } catch (err) {
+      console.error("Gagal menunda notifikasi:", err);
     }
     setActiveNotification(null);
   };
@@ -1041,10 +928,11 @@ export default function App() {
                   </span>
                 </div>
                 <button
-                  onClick={async () => {
+                  onClick={() => {
                     playTickSound();
                     if (confirm('Apakah Anda yakin ingin keluar dari akun?')) {
-                      await signOut(auth);
+                      localStorage.removeItem('app_user_session');
+                      setCurrentUser(null);
                     }
                   }}
                   className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all cursor-pointer ml-1"
@@ -1481,6 +1369,7 @@ export default function App() {
                         onDelete={handleDeleteEntry}
                         onQuickReschedule={handleQuickReschedule}
                         onToggleSubtask={handleToggleSubtask}
+                        onAiBreakdown={handleAiBreakdownTask}
                       />
                     ))}
                   </AnimatePresence>
@@ -1551,6 +1440,7 @@ export default function App() {
                     onDelete={handleDeleteEntry}
                     onQuickReschedule={handleQuickReschedule}
                     onToggleSubtask={handleToggleSubtask}
+                    onAiBreakdown={handleAiBreakdownTask}
                   />
                 ))}
               </AnimatePresence>

@@ -1,9 +1,5 @@
 import React, { useState } from 'react';
-import { 
-  signInWithPopup, 
-  GoogleAuthProvider
-} from 'firebase/auth';
-import { auth } from '../lib/firebase.ts';
+import { apiClient, AppUser } from '../services/apiClient.ts';
 import { 
   FolderSync, 
   AlertCircle, 
@@ -18,7 +14,7 @@ import { playSuccessSound, playTickSound } from '../utils/audio.ts';
 
 interface AuthScreenProps {
   onClose?: () => void;
-  onAuthSuccess?: () => void;
+  onAuthSuccess?: (user: AppUser) => void;
 }
 
 export default function AuthScreen({ onClose, onAuthSuccess }: AuthScreenProps) {
@@ -31,17 +27,13 @@ export default function AuthScreen({ onClose, onAuthSuccess }: AuthScreenProps) 
     playTickSound();
     
     try {
-      const provider = new GoogleAuthProvider();
-      await signInWithPopup(auth, provider);
+      const user = await apiClient.login('admin@example.com', 'Admin Pengguna');
       playSuccessSound();
-      if (onAuthSuccess) onAuthSuccess();
+      if (onAuthSuccess) onAuthSuccess(user);
+      if (onClose) onClose();
     } catch (err: any) {
       console.error(err);
-      if (err.code === 'auth/popup-closed-by-user') {
-        setError('Login dibatalkan.');
-      } else {
-        setError('Gagal masuk. Silakan coba lagi.');
-      }
+      setError('Gagal masuk ke server database.');
     } finally {
       setLoading(false);
     }

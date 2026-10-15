@@ -11,9 +11,12 @@ import {
   CheckSquare, 
   Tag, 
   PlusCircle, 
-  X 
+  X,
+  Sparkles,
+  Bot
 } from 'lucide-react';
 import { motion } from 'motion/react';
+import { playSuccessSound } from '../utils/audio.ts';
 
 interface ActivityFormProps {
   initialData?: ActivityEntry | null;
@@ -66,6 +69,48 @@ export default function ActivityForm({
   const [courseName, setCourseName] = useState('');
   const [subtasks, setSubtasks] = useState<SubTask[]>([]);
   const [newSubtaskText, setNewSubtaskText] = useState('');
+  const [isGeneratingSubtasks, setIsGeneratingSubtasks] = useState(false);
+  const [aiAdvice, setAiAdvice] = useState<string | null>(null);
+  const [estimatedHours, setEstimatedHours] = useState<number | null>(null);
+  const [aiError, setAiError] = useState<string | null>(null);
+
+  const handleAiBreakdown = async () => {
+    if (!courseName.trim() && !title.trim()) {
+      setAiError('Silakan masukkan Judul Kegiatan atau Nama Mata Kuliah terlebih dahulu.');
+      return;
+    }
+    setAiError(null);
+    setIsGeneratingSubtasks(true);
+    try {
+      const res = await fetch('/api/ai/breakdown-task', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          courseName: courseName.trim(),
+          title: title.trim(),
+          content: content.trim()
+        })
+      });
+      if (!res.ok) throw new Error('Gagal memproses AI breakdown');
+      const data = await res.json();
+      if (Array.isArray(data.subtasks) && data.subtasks.length > 0) {
+        const newTasks: SubTask[] = data.subtasks.map((st: { text: string }, idx: number) => ({
+          id: `ai-${Date.now()}-${idx}`,
+          text: st.text,
+          done: false
+        }));
+        setSubtasks(newTasks);
+        playSuccessSound();
+      }
+      if (data.advice) setAiAdvice(data.advice);
+      if (data.estimatedHours) setEstimatedHours(data.estimatedHours);
+    } catch (err: any) {
+      console.error(err);
+      setAiError('Terjadi kendala saat memecah tugas secara otomatis.');
+    } finally {
+      setIsGeneratingSubtasks(false);
+    }
+  };
 
   // Daily routine details
   const [frequency, setFrequency] = useState<'daily' | 'weekly' | 'weekdays' | 'custom'>('daily');
@@ -450,7 +495,50 @@ export default function ActivityForm({
 
               {/* Subtasks checklist */}
               <div>
-                <label className="block text-xs font-medium text-slate-600 mb-1.5">Langkah Pengerjaan / Subtask ({subtasks.length})</label>
+                <div className="flex items-center justify-between mb-1.5 flex-wrap gap-2">
+                  <label className="block text-xs font-medium text-slate-600">Langkah Pengerjaan / Subtask ({subtasks.length})</label>
+                  <button
+                    type="button"
+                    onClick={handleAiBreakdown}
+                    disabled={isGeneratingSubtasks}
+                    className="py-1 px-2.5 bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 active:scale-95 text-white rounded-lg text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
+                    title="Pecah tugas kuliah ini secara otomatis menggunakan AI"
+                    id="btn_ai_breakdown_subtasks"
+                  >
+                    {isGeneratingSubtasks ? (
+                      <>
+                        <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                        <span>Menganalisis tugas...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="h-3.5 w-3.5 text-amber-300" />
+                        <span>✨ Auto-Breakdown (AI)</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                {aiError && (
+                  <div className="mb-2 p-2 bg-rose-50 border border-rose-200 text-rose-700 text-xs rounded-lg font-medium">
+                    {aiError}
+                  </div>
+                )}
+
+                {aiAdvice && (
+                  <div className="mb-2.5 p-2.5 bg-indigo-50/80 border border-indigo-100 rounded-xl text-xs text-indigo-900 flex items-start gap-2">
+                    <Sparkles className="w-4 h-4 text-indigo-600 shrink-0 mt-0.5" />
+                    <div>
+                      <span className="font-bold text-indigo-950">Strategi Pengerjaan: </span>
+                      <span>{aiAdvice}</span>
+                      {estimatedHours && (
+                        <span className="ml-1.5 inline-block font-bold text-indigo-700 bg-white/80 px-1.5 py-0.5 rounded border border-indigo-200/50">
+                          ⏱️ Est: ~{estimatedHours} jam
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )}
                 
                 {subtasks.length > 0 && (
                   <div className="space-y-1.5 mb-3 bg-white p-2.5 rounded-xl border border-slate-150 max-h-40 overflow-y-auto">
