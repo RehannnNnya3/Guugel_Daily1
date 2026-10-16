@@ -1,0 +1,6 @@
+{
+  "summary": "Rencana revisi: Memperbaiki error ENOENT /app/applet/dist/index.html pada mode publikasi/produksi server.ts, transisi menyeluruh ke mode 100% lokal offline (penghapusan polling detik jam, penyembunyian Cloud Sync & QR HP, dan penggantian AI dengan algoritma kalkulasi lokal offline).",
+  "updatedAt": "2026-10-16T13:21:52.373292742Z",
+  "requestFeedback": true,
+  "userFacing": true
+}

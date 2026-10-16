@@ -418,25 +418,34 @@ Evaluasi kesehatan keuangan pengguna:
   });
 
   // Integrate Vite for development, serve static files for production
-  const isProduction =
-    process.env.NODE_ENV === "production" ||
-    Boolean(process.env.K_SERVICE) ||
-    process.env.npm_lifecycle_event === "start";
+  const distPath = path.join(process.cwd(), "dist");
+  const indexPath = path.join(distPath, "index.html");
+  let hasDist = false;
+  try {
+    const stat = await fs.stat(indexPath);
+    hasDist = stat.isFile();
+  } catch {
+    hasDist = false;
+  }
 
-  if (!isProduction) {
-    console.log(`Starting server in DEVELOPMENT mode on port ${PORT}...`);
+  const isProduction =
+    (process.env.NODE_ENV === "production" ||
+    Boolean(process.env.K_SERVICE) ||
+    process.env.npm_lifecycle_event === "start") && hasDist;
+
+  if (isProduction) {
+    console.log(`Starting server in PRODUCTION mode on port ${PORT}... (Serving ${distPath})`);
+    app.use(express.static(distPath));
+    app.get("*", (req, res) => {
+      res.sendFile(indexPath);
+    });
+  } else {
+    console.log(`Starting server in DEVELOPMENT / ON-DEMAND mode on port ${PORT}...`);
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
     });
     app.use(vite.middlewares);
-  } else {
-    console.log(`Starting server in PRODUCTION mode on port ${PORT}...`);
-    const distPath = path.join(process.cwd(), "dist");
-    app.use(express.static(distPath));
-    app.get("*", (req, res) => {
-      res.sendFile(path.join(distPath, "index.html"));
-    });
   }
 
   app.listen(PORT, "0.0.0.0", () => {

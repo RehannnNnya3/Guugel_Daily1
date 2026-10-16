@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { playSuccessSound } from '../utils/audio.ts';
+import { generateOfflineTaskBreakdown } from '../utils/offlineEngine.ts';
 
 interface ActivityFormProps {
   initialData?: ActivityEntry | null;
@@ -74,7 +75,7 @@ export default function ActivityForm({
   const [estimatedHours, setEstimatedHours] = useState<number | null>(null);
   const [aiError, setAiError] = useState<string | null>(null);
 
-  const handleAiBreakdown = async () => {
+  const handleAiBreakdown = () => {
     if (!courseName.trim() && !title.trim()) {
       setAiError('Silakan masukkan Judul Kegiatan atau Nama Mata Kuliah terlebih dahulu.');
       return;
@@ -82,20 +83,16 @@ export default function ActivityForm({
     setAiError(null);
     setIsGeneratingSubtasks(true);
     try {
-      const res = await fetch('/api/ai/breakdown-task', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          courseName: courseName.trim(),
-          title: title.trim(),
-          content: content.trim()
-        })
-      });
-      if (!res.ok) throw new Error('Gagal memproses AI breakdown');
-      const data = await res.json();
+      // 100% Offline Local Algorithmic Breakdown
+      const data = generateOfflineTaskBreakdown(
+        courseName.trim(),
+        title.trim(),
+        content.trim()
+      );
+
       if (Array.isArray(data.subtasks) && data.subtasks.length > 0) {
-        const newTasks: SubTask[] = data.subtasks.map((st: { text: string }, idx: number) => ({
-          id: `ai-${Date.now()}-${idx}`,
+        const newTasks: SubTask[] = data.subtasks.map((st, idx) => ({
+          id: `local-${Date.now()}-${idx}`,
           text: st.text,
           done: false
         }));
@@ -106,7 +103,7 @@ export default function ActivityForm({
       if (data.estimatedHours) setEstimatedHours(data.estimatedHours);
     } catch (err: any) {
       console.error(err);
-      setAiError('Terjadi kendala saat memecah tugas secara otomatis.');
+      setAiError('Terjadi kendala saat memproses pemecahan tugas secara lokal.');
     } finally {
       setIsGeneratingSubtasks(false);
     }
@@ -502,7 +499,7 @@ export default function ActivityForm({
                     onClick={handleAiBreakdown}
                     disabled={isGeneratingSubtasks}
                     className="py-1 px-2.5 bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 active:scale-95 text-white rounded-lg text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
-                    title="Pecah tugas kuliah ini secara otomatis menggunakan AI"
+                    title="Pecah tugas kuliah ini secara instan menggunakan algoritma cerdas lokal (offline)"
                     id="btn_ai_breakdown_subtasks"
                   >
                     {isGeneratingSubtasks ? (
@@ -513,7 +510,7 @@ export default function ActivityForm({
                     ) : (
                       <>
                         <Sparkles className="h-3.5 w-3.5 text-amber-300" />
-                        <span>✨ Auto-Breakdown (AI)</span>
+                        <span>✨ Auto-Breakdown (Lokal)</span>
                       </>
                     )}
                   </button>

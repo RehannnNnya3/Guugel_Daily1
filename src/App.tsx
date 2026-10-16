@@ -43,6 +43,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { apiClient, AppUser, DbStatusInfo } from './services/apiClient.ts';
 import AuthScreen from './components/AuthScreen.tsx';
 import MobileSyncModal from './components/MobileSyncModal.tsx';
+import { generateOfflineTaskBreakdown } from './utils/offlineEngine.ts';
 
 const LOCAL_STORAGE_KEY_ENTRIES = 'catatan_harian_entries';
 const LOCAL_STORAGE_KEY_CATEGORIES = 'catatan_harian_categories';
@@ -156,11 +157,6 @@ export default function App() {
       setBrowserNotificationAllowed(Notification.permission === 'granted');
     }
 
-    // Live clock ticks
-    const clockInterval = setInterval(() => {
-      setCurrentTime(new Date());
-    }, 1000);
-
     // Check DB status
     apiClient.getDbStatus().then(status => {
       setDbStatus(status);
@@ -249,10 +245,6 @@ export default function App() {
     };
 
     loadAppData();
-
-    return () => {
-      clearInterval(clockInterval);
-    };
   }, [currentUser]);
 
   // 2. Alarm checking loop - Runs every 5 seconds to check deadlines and alerts
@@ -702,20 +694,16 @@ export default function App() {
     if (!entry) return;
     playTickSound();
     try {
-      const res = await fetch('/api/ai/breakdown-task', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          courseName: entry.courseDetails?.courseName || entry.title,
-          title: entry.title,
-          content: entry.content
-        })
-      });
-      if (!res.ok) throw new Error('AI breakdown error');
-      const data = await res.json();
+      // 100% Offline Local Breakdown
+      const data = generateOfflineTaskBreakdown(
+        entry.courseDetails?.courseName || entry.title,
+        entry.title,
+        entry.content
+      );
+
       if (Array.isArray(data.subtasks) && data.subtasks.length > 0) {
-        const newSubtasks = data.subtasks.map((st: { text: string }, idx: number) => ({
-          id: `ai-${Date.now()}-${idx}`,
+        const newSubtasks = data.subtasks.map((st, idx) => ({
+          id: `local-${Date.now()}-${idx}`,
           text: st.text,
           done: false
         }));
@@ -737,11 +725,11 @@ export default function App() {
         try {
           await apiClient.updateActivity(entryId, patch, uid);
         } catch (err) {
-          console.error("Gagal menyimpan subtask ke database:", err);
+          console.warn("Simpan subtask lokal:", err);
         }
       }
     } catch (err) {
-      console.error("Gagal auto-breakdown:", err);
+      console.error("Gagal auto-breakdown lokal:", err);
     }
   };
 
@@ -890,97 +878,22 @@ export default function App() {
                 <span className="text-xs font-normal text-slate-400 hidden sm:inline">| Catatan & Pengingat</span>
               </h1>
               <div className="flex items-center gap-2">
-                <span className={`w-2 h-2 rounded-full ${syncStatus.status === 'synced' ? 'bg-green-500 animate-pulse' : syncStatus.status === 'syncing' ? 'bg-indigo-500 animate-spin' : 'bg-amber-500'}`}></span>
+                <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
                 <span className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">
-                  {syncStatus.status === 'synced' ? 'Cloud Sync Active' : syncStatus.status === 'syncing' ? 'Syncing...' : 'Local Offline'} 
-                  {syncStatus.lastSyncedAt && ` • ${new Date(syncStatus.lastSyncedAt).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}`}
+                  Mode Lokal Offline
                 </span>
               </div>
             </div>
           </div>
 
-          {/* Sync status indicators and Local Time Clock */}
+          {/* Static Local Date Display - Offline Mode */}
           <div className="flex items-center gap-3">
-            {/* Live UTC / Local Clock - extremely useful to track deadlines */}
-            <div className="bg-slate-100 px-3 py-1.5 rounded-lg border border-slate-200/50 flex items-center gap-2 text-xs font-semibold text-slate-600 font-mono hidden md:flex">
-              <Clock className="h-3.5 w-3.5 text-slate-400" />
+            <div className="bg-slate-100 px-3 py-1.5 rounded-lg border border-slate-200/50 flex items-center gap-2 text-xs font-semibold text-slate-700 hidden md:flex shadow-2xs">
+              <Calendar className="h-3.5 w-3.5 text-indigo-600" />
               <span>
-                {currentTime.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                {new Date().toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
               </span>
             </div>
-
-            {/* Firebase Auth Controls */}
-            {isAuthLoading ? (
-              <div className="w-8 h-8 flex items-center justify-center">
-                <div className="w-4 h-4 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
-              </div>
-            ) : currentUser ? (
-              <div className="flex items-center gap-2 bg-slate-50 border border-slate-200/60 pl-2 pr-2.5 py-1 rounded-xl">
-                <div className="w-7 h-7 bg-indigo-100 text-indigo-700 rounded-lg font-bold text-xs flex items-center justify-center border border-indigo-200 shrink-0">
-                  {currentUser.displayName?.[0]?.toUpperCase() || currentUser.email?.[0]?.toUpperCase() || 'U'}
-                </div>
-                <div className="flex flex-col text-left hidden sm:flex max-w-[120px]">
-                  <span className="text-[10px] font-extrabold text-slate-800 truncate leading-tight">
-                    {currentUser.displayName || 'User'}
-                  </span>
-                  <span className="text-[9px] text-slate-500 font-semibold truncate leading-none mt-0.5">
-                    {currentUser.email}
-                  </span>
-                </div>
-                <button
-                  onClick={() => {
-                    playTickSound();
-                    if (confirm('Apakah Anda yakin ingin keluar dari akun?')) {
-                      localStorage.removeItem('app_user_session');
-                      setCurrentUser(null);
-                    }
-                  }}
-                  className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all cursor-pointer ml-1"
-                  title="Keluar dari Akun (Sign Out)"
-                >
-                  <LogOut className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            ) : (
-              <button
-                onClick={() => {
-                  playTickSound();
-                  setShowAuthModal(true);
-                }}
-                className="px-3.5 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-extrabold rounded-xl border border-indigo-200/60 transition-all flex items-center gap-1.5 cursor-pointer shrink-0"
-                id="btn_sign_in"
-              >
-                <LogIn className="h-3.5 w-3.5 text-indigo-600" />
-                <span>SIGN IN</span>
-              </button>
-            )}
-
-            {/* Mobile Sync / QR Code button */}
-            <button
-              onClick={() => {
-                playTickSound();
-                setShowMobileSyncModal(true);
-              }}
-              className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-lg border border-slate-200/60 transition-all flex items-center gap-1.5 cursor-pointer shrink-0"
-              title="Buka di HP via QR Code"
-              id="btn_open_mobile_sync"
-            >
-              <Smartphone className="h-3.5 w-3.5 text-indigo-600" />
-              <span className="hidden sm:inline">Buka di HP</span>
-            </button>
-
-            {/* Cloud manual sync button */}
-            {!currentUser && (
-              <button
-                onClick={() => triggerCloudSyncPull(entries)}
-                className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-lg border border-slate-200/60 transition-all flex items-center gap-1.5 cursor-pointer"
-                title="Sinkronisasi Manual dengan Cloud"
-                id="btn_manual_sync"
-              >
-                <RefreshCw className={`h-3.5 w-3.5 ${syncStatus.status === 'syncing' ? 'animate-spin' : ''}`} />
-                <span className="hidden sm:inline">Sync</span>
-              </button>
-            )}
           </div>
 
         </div>
@@ -1553,7 +1466,7 @@ export default function App() {
           <div className="flex gap-3">
              <span>{countCompleted} Tasks Completed Today</span>
              <span className="text-slate-300">|</span>
-             <span>Last Cloud Sync: {syncStatus.lastSyncedAt ? new Date(syncStatus.lastSyncedAt).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) : 'Just Now'}</span>
+             <span>Penyimpanan Lokal Aktif (Offline)</span>
           </div>
           <div className="flex items-center gap-1.5">
              <div className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse"></div>

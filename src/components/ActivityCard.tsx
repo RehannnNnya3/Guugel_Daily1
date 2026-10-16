@@ -251,7 +251,7 @@ export default function ActivityCard({
                   <button
                     onClick={() => onAiBreakdown(entry.id)}
                     className="p-1 text-indigo-600 hover:text-indigo-800 hover:bg-indigo-50 rounded transition-all cursor-pointer"
-                    title="Pecah langkah subtask dengan AI"
+                    title="Pecah langkah subtask dengan algoritma lokal"
                   >
                     <Sparkles className="w-3 h-3" />
                   </button>
@@ -298,7 +298,7 @@ export default function ActivityCard({
                     className="py-1 px-2.5 bg-blue-100 hover:bg-blue-200 text-blue-800 rounded-lg text-[10px] font-bold flex items-center gap-1 transition-all cursor-pointer"
                   >
                     <Sparkles className="w-3 h-3 text-indigo-600" />
-                    <span>Auto-Breakdown (AI)</span>
+                    <span>Auto-Breakdown (Lokal)</span>
                   </button>
                 )}
               </div>

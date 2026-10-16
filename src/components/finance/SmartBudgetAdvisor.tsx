@@ -16,6 +16,7 @@ import {
   Check
 } from 'lucide-react';
 import { playSuccessSound, playTickSound } from '../../utils/audio.ts';
+import { generateOfflineBudgetAnalysis } from '../../utils/offlineEngine.ts';
 
 interface SmartBudgetAdvisorProps {
   selectedMonth: string;
@@ -125,7 +126,8 @@ export default function SmartBudgetAdvisor({
         balanceSummary[acc?.name || key] = detailedBalances[key];
       });
 
-      const payload = {
+      // 100% Offline Local Algorithmic Analysis (no internet or API key needed)
+      const data = generateOfflineBudgetAnalysis({
         month: monthName,
         totalIncome,
         totalExpense,
@@ -137,22 +139,13 @@ export default function SmartBudgetAdvisor({
           return d.getFullYear() === parseInt(y) && d.getMonth() === parseInt(m) - 1;
         }).length,
         budgetGoal: budgetLimit > 0 ? budgetLimit : undefined
-      };
-
-      const res = await fetch('/api/ai/finance-analysis', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
       });
 
-      if (!res.ok) throw new Error('Failed to analyze finance');
-      const data: AnalysisResult = await res.json();
-      data.analyzedAt = new Date().toISOString();
       setAnalysis(data);
       localStorage.setItem(`ai_budget_analysis_${selectedMonth}`, JSON.stringify(data));
       playSuccessSound();
     } catch (error) {
-      console.error("AI Budget Analysis Error:", error);
+      console.error("Local Budget Analysis Error:", error);
     } finally {
       setIsLoading(false);
     }
@@ -197,13 +190,13 @@ export default function SmartBudgetAdvisor({
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h3 className="font-extrabold text-base tracking-tight text-white">Smart Budget & Analisis Finansial (AI)</h3>
+              <h3 className="font-extrabold text-base tracking-tight text-white">Smart Budget & Analisis Finansial (Lokal Offline)</h3>
               <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-indigo-500/30 text-indigo-200 border border-indigo-400/30">
                 {monthName}
               </span>
             </div>
             <p className="text-xs text-slate-300 mt-0.5">
-              Evaluasi kesehatan finansial, proyeksi arus kas, dan deteksi dini pemborosan.
+              Evaluasi kesehatan finansial 100% lokal offline: analisis arus kas, rasio tabungan, dan deteksi dini tanpa internet.
             </p>
           </div>
         </div>
@@ -216,7 +209,7 @@ export default function SmartBudgetAdvisor({
             id="btn_run_ai_finance_analysis"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
-            <span>{isLoading ? 'Menganalisis...' : analysis ? 'Perbarui Analisis' : 'Analisis AI'}</span>
+            <span>{isLoading ? 'Menganalisis...' : analysis ? 'Perbarui Analisis (Lokal)' : 'Analisis Finansial (Lokal)'}</span>
           </button>
           
           <button
@@ -435,16 +428,16 @@ export default function SmartBudgetAdvisor({
               <div className="w-12 h-12 bg-indigo-50 rounded-2xl flex items-center justify-center text-indigo-600 mx-auto">
                 <Sparkles className="w-6 h-6" />
               </div>
-              <h4 className="font-bold text-sm text-slate-800">Belum Ada Analisis AI Bulan Ini</h4>
+              <h4 className="font-bold text-sm text-slate-800">Belum Ada Analisis Finansial Bulan Ini</h4>
               <p className="text-xs text-slate-500 max-w-md mx-auto">
-                Klik tombol di bawah untuk meminta Gemini AI menganalisis riwayat transaksi, rasio pengeluaran kategori, dan memberikan saran penghematan terukur.
+                Klik tombol di bawah untuk menjalankan algoritma kalkulasi lokal offline guna menganalisis riwayat transaksi, rasio pengeluaran kategori, dan menghasilkan rekomendasi penghematan terukur tanpa membutuhkan internet.
               </p>
               <button
                 onClick={runAiAnalysis}
                 className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-all shadow-md flex items-center gap-2 mx-auto cursor-pointer"
               >
                 <Sparkles className="w-3.5 h-3.5 text-amber-300" />
-                Mulai Analisis Keuangan Cerdas
+                Mulai Analisis Keuangan Lokal
               </button>
             </div>
           )}
