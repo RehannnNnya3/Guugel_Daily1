@@ -44,6 +44,7 @@ import { apiClient, AppUser, DbStatusInfo } from './services/apiClient.ts';
 import AuthScreen from './components/AuthScreen.tsx';
 import MobileSyncModal from './components/MobileSyncModal.tsx';
 import { generateOfflineTaskBreakdown } from './utils/offlineEngine.ts';
+import { SmartExecutiveWidget } from './components/SmartExecutiveWidget.tsx';
 
 const LOCAL_STORAGE_KEY_ENTRIES = 'catatan_harian_entries';
 const LOCAL_STORAGE_KEY_CATEGORIES = 'catatan_harian_categories';
@@ -925,6 +926,22 @@ export default function App() {
 
       {/* 2. Main content area */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 flex-1" id="app_main">
+        {/* Smart Executive Widget - Ringkasan Cerdas 100% Offline */}
+        <SmartExecutiveWidget
+          entries={entries}
+          financeEntries={financeEntries}
+          onSelectTask={(id) => {
+            const entry = entries.find(e => e.id === id);
+            if (entry) {
+              setEditingEntry(entry);
+              setIsFormOpen(true);
+            }
+          }}
+          onToggleStatus={(id) => {
+            handleToggleStatus(id);
+          }}
+        />
+
         {activeModule === 'finance' ? (
           <FinanceDashboard
             financeCategories={financeCategories}

@@ -1,53 +1,145 @@
-# Rencana Perbaikan & Mode 100% Lokal Offline
+# Sistem Cerdas Terintegrasi (Smart Executive Pilot) & Widget Ringkasan Cerdas
 
-## 1. Perbaikan Utama Error Produksi (ENOENT `/app/applet/dist/index.html`)
+Sistem asisten cerdas 100% lokal offline yang menganalisis beban produktivitas dan ritme keuangan harian secara real-time, menyajikan insight prediktif serta "Next Best Action" melalui Widget Ringkasan Cerdas di bagian atas dashboard SynchroDiary.
 
-### Akar Masalah:
-Saat aplikasi dipublikasikan secara online atau dijalankan dalam mode produksi (`NODE_ENV === "production"` atau `K_SERVICE`), `server.ts` mencoba melayani file statis dari direktori `dist/index.html`. Jika build belum dijalankan atau file `dist/index.html` belum ada, Node.js melempar error fatal:
-`Error: ENOENT: no such file or directory, stat '/app/applet/dist/index.html'`
+### User Review & Critical Decisions
 
-### Solusi & Mitigasi:
-1. **Fallback Cerdas di `server.ts`**:
-   - Tambahkan pengecekan `fs.existsSync(path.join(distPath, "index.html"))`.
-   - Jika direktori `dist/index.html` belum tersedia, server secara otomatis fallback menjalankan Vite middleware (`createViteServer`) sehingga aplikasi tetap berjalan normal tanpa pernah crash 404/500/ENOENT.
-   - Jika direktori `dist/index.html` tersedia, server melayani file statis dengan aman.
-2. **Eksekusi Build Produksi (`npm run build`)**:
-   - Menghasilkan bundle `dist/` terkompilasi agar siap digunakan langsung dalam lingkungan hosting/production.
+> [!IMPORTANT]
+> Berdasarkan konfirmasi sebelumnya, seluruh sistem cerdas dirancang berjalan **100% lokal di browser (offline deterministik)** tanpa ketergantungan API pihak ketiga atau internet, disajikan dalam **Widget Ringkasan Cerdas di bagian atas dashboard**.
 
----
-
-## 2. Transisi Menyeluruh ke Mode 100% Lokal Offline
-
-Berdasarkan keputusan klarifikasi pengguna:
-
-### A. Header & Tampilan Jam Lokal Statis
-- **Hapus polling interval detik** (`setInterval` 1000ms pada `currentTime`) di `src/App.tsx`.
-- Ganti dengan tampilan **tanggal lokal statis** (`Hari, DD MMMM YYYY`) yang dibaca sekali saat inisialisasi dari perangkat pengguna.
-- Menghilangkan konsumsi CPU re-render detik demi kinerja yang sangat ringan dan hemat daya.
-
-### B. Penyembunyian Elemen Cloud & QR Code
-- Sembunyikan tombol **Cloud Sync** dan **QR Code Buka di HP** dari header navigasi utama.
-- Hilangkan badge/indikator status cloud yang membingungkan.
-- Aplikasi sepenuhnya berfokus pada mode lokal di komputer pengguna (terhubung ke database lokal / phpMyAdmin / local storage).
-
-### C. Penggantian AI dengan Mesin Kalkulasi Algoritma Lokal (Offline Engine)
-- **Analisis Finansial Cerdas Offline**:
-  - Ganti panggilan API eksternal dengan modul kalkulasi deterministik offline di `SmartBudgetAdvisor.tsx` dan `server.ts`.
-  - Menghitung rasio tabungan, simulasi alokasi 50/30/20, batas belanja harian aman (safe daily spend), dan rekomendasi penghematan praktis secara instan (<5ms) tanpa membutuhkan kunci API internet.
-- **Pecah Tugas Otomatis Offline**:
-  - Ganti endpoint AI breakdown tugas dengan parser heuristik berbasis aturan lokal yang mengenali jenis tugas (skripsi, koding, makalah, ujian, game quest, presentasi) dan otomatis menghasilkan sub-tugas terstruktur.
+- **Keputusan Terkonfirmasi (User Choice)**: Penyajian sistem cerdas dalam bentuk **Widget Ringkasan Cerdas di bagian atas dashboard** yang menyatu mulus di atas modul Catatan Harian maupun Keuangan.
+- **Rekomendasi Lingkup Sistem Cerdas**:
+  1. *Smart Priority & Deadline Engine*: Mengkalkulasi skor urgensi dinamis berbasis waktu tersisa, bobot prioritas, dan sub-tugas yang belum selesai untuk merekomendasikan 1 tugas utama yang harus dieksekusi sekarang (*Next Best Action*).
+  2. *Safe Daily Spend & Financial Radar*: Mengestimasi batas belanja aman per hari secara real-time berdasarkan sisa hari di bulan berjalan, total saldo likuid, dan rasio pengeluaran.
+  3. *Habit & Routine Streak Guard*: Mendeteksi rutinitas yang terancam terlewat sebelum hari berganti dan mengingatkan pengguna dengan aksi 1-klik selesaikan.
 
 ---
 
-## 3. Langkah Implementasi Terurut
-1. **Perbaiki `server.ts`**: Pasang proteksi `fs.existsSync` untuk fallback ke Vite middleware jika `dist` belum dibuat, dan pasang algoritma kalkulasi offline internal.
-2. **Modifikasi `src/App.tsx`**:
-   - Hapus state jam interval detik `currentTime`.
-   - Tampilkan tanggal lokal statis.
-   - Sembunyikan tombol Cloud Sync dan QR HP.
-3. **Modifikasi `src/components/finance/SmartBudgetAdvisor.tsx`**:
-   - Ganti pemanggilan Gemini AI dengan algoritma analisis finansial offline lokal langsung di browser.
-4. **Jalankan `npm run build`**:
-   - Memastikan `dist/index.html` dan aset statis selalu siap dan tidak memicu error ENOENT.
-5. **Verifikasi & Uji Kompilasi**:
-   - Jalankan `compile_applet` untuk memastikan seluruh aplikasi lulus validasi tanpa error.
+### 1. Overview & Core Concept
+
+- **What It Does**: Sebuah mesin rekomendasi lokal berkecepatan tinggi (<2ms) yang membaca seluruh data kegiatan (`entries`) dan transaksi keuangan (`financeEntries`), kemudian mengekstraksi status kesehatan harian (*Daily Health Pulse*), mendeteksi anomali/bottleneck, dan memberikan kartu rekomendasi tindakan langsung.
+- **Target Audience / Persona**: Mahasiswa atau profesional muda yang mengelola tugas kuliah/kerja, rutinitas harian, aktivitas hobi/gaming, dan anggaran belanja personal dalam satu aplikasi mandiri tanpa internet.
+- **Key Value**: Pengguna tidak perlu membuka tab berbeda atau menganalisis data mentah secara manual; sekali membuka aplikasi, mereka langsung tahu apa prioritas nomor satu hari ini dan berapa sisa budget aman mereka.
+
+---
+
+### 2. User Experience & Visual Design
+
+#### Key User Flows
+1. **Zero State / Fresh Launch**: Saat pengguna membuka aplikasi, widget cerdas di bagian atas dashboard langsung menghitung skor kesiapan hari ini (*Daily Pulse Score* 0–100) dengan status ringkas (*e.g., "Kondisi Terkendali" / "Butuh Perhatian"*).
+2. **Next Best Action Focus**: Widget menampilkan kartu fokus utama: "Kerjakan [Judul Tugas] sebelum [Waktu] - 2 sub-tugas tersisa" dengan tombol aksi langsung "Mulai / Selesaikan".
+3. **Financial Insight Glance**: Indikator batas belanja aman hari ini (*e.g., "Batas Belanja Hari Ini: Rp 45.000 (Aman)"* atau *"Pengeluaran hari ini tinggi: 78% dari batas aman"*).
+4. **Quick Toggle / Expand Details**: Pengguna dapat menekan tombol "Detail Analisis Cerdas" untuk membuka modal rincian algoritma atau menyusutkan widget jika ingin tampilan minimalis.
+
+#### Visual Identity & Theme (Anti-Slop & Zero-Pill Guidelines)
+- **Aesthetic Direction**: *Quiet Productivity & Utilitarian Precision* — bersih, fungsional, bernuansa dashboard finansial & task manager modern.
+- **Color Palette**:
+  - Background widget: Netral bertekstur halus (`bg-white` dengan border halus `border-slate-200/80` dan shadow mikro `shadow-xs`).
+  - Aksen status: Slate tua (`text-slate-900`) untuk data primer, Indigo elegan (`text-indigo-600`) untuk fokus aksi tugas, Emerald tenang (`text-emerald-600`) untuk keuangan aman, Amber/Rose untuk peringatan deadline.
+  - Bebas dari gradien ungu klise dan pill badges bertumpuk.
+- **Typography & Hierarchy**:
+  - Label kategori dan timestamp disajikan sebagai teks bersih tanpa bungkus pil (*unboxed metadata* dengan separator titik tengah `·`).
+  - Tipografi tegas: Angka metrik dengan font tabular (*tabular-nums*) agar mudah dibaca cepat.
+- **Interactive Feedback**:
+  - Tombol aksi dengan hover transition mikro (`hover:bg-slate-100`, `active:scale-[0.98]`).
+  - Animasi transisi smooth saat sub-tugas diselesaikan dan skor kesehatan harian ter-update otomatis secara instan.
+
+---
+
+### 3. Key Product Decisions & Trade-Offs
+
+- **Keputusan 1: Algoritma Heuristik Deterministik vs Remote LLM**
+  - *Pendekatan*: Menjalankan algoritma pemeringkatan terbobot (*multi-criteria decision scoring*) murni di sisi klien (`src/utils/smartSystemEngine.ts`).
+  - *Alasan*: Menjawab kebutuhan 100% offline, zero-latency, tidak memerlukan kunci API/kuota internet, serta hasil kalkulasi 100% konsisten dan transparan.
+  - *Alternatif yang Ditolak*: Panggilan API eksternal (memerlukan koneksi internet dan rawan kegagalan offline).
+- **Keputusan 2: Posisi Widget di Puncak Konten Dashboard**
+  - *Pendekatan*: Diletakkan di bawah switcher modul dan tepat di atas grid konten utama (`src/App.tsx`).
+  - *Alasan*: Sesuai pilihan pengguna pada sesi tanya-jawab; memberikan visibilitas tertinggi saat pertama kali membuka aplikasi tanpa menghalangi alur kerja filter dan pencarian.
+  - *Fitur Minimalis*: Menyediakan tombol minimize/expand agar pengguna fleksibel mengatur ruang layar.
+
+---
+
+### 4. Technical Architecture & Data Strategy
+
+#### Architecture & Component Diagram
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                 SynchroDiary Local App                      │
+│                                                             │
+│  ┌───────────────────────────────────────────────────────┐  │
+│  │                    App Header                         │  │
+│  │  Logo · SynchroDiary · Mode Lokal Offline · Tanggal    │  │
+│  └───────────────────────────────────────────────────────┘  │
+│                             │                               │
+│  ┌───────────────────────────────────────────────────────┐  │
+│  │           Smart Executive Widget (Top of Main)        │  │
+│  │  ┌──────────────────┐  ┌───────────────────────────┐  │  │
+│  │  │ Daily Pulse 85   │  │ Next Best Action:         │  │  │
+│  │  │ Kondisi Seimbang │  │ Tugas Algoritma (2 Subtask)│  │  │
+│  │  └──────────────────┘  └───────────────────────────┘  │  │
+│  │  ┌──────────────────┐  ┌───────────────────────────┐  │  │
+│  │  │ Safe Spend Today │  │ Rutinitas:                │  │  │
+│  │  │ Rp 52.000 / Hari │  │ 2 dari 3 Selesai (67%)    │  │  │
+│  │  └──────────────────┘  └───────────────────────────┘  │  │
+│  └───────────────────────────────────────────────────────┘  │
+│                             │                               │
+│             ┌───────────────┴───────────────┐               │
+│             ▼                               ▼               │
+│  ┌──────────────────────┐      ┌─────────────────────────┐  │
+│  │  Module: Catatan     │      │   Module: Keuangan      │  │
+│  │  - Task Filters      │      │   - Financial Cards     │  │
+│  │  - Activity Cards    │      │   - Smart Advisor       │  │
+│  │  - Activity Form     │      │   - Transaction Lists   │  │
+│  └──────────────────────┘      └─────────────────────────┘  │
+│             ▲                               ▲               │
+│             └───────────────┬───────────────┘               │
+│                             │                               │
+│  ┌───────────────────────────────────────────────────────┐  │
+│  │          smartSystemEngine.ts (100% Offline)          │  │
+│  │  - calculateDailyPulseScore(entries, finance)         │  │
+│  │  - getNextBestAction(entries)                         │  │
+│  │  - calculateSafeDailySpend(financeEntries, date)      │  │
+│  │  - detectHabitAnomalies(entries)                      │  │
+│  └───────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────┘
+```
+
+#### Data Model & Engine Logic
+
+```typescript
+export interface SmartExecutiveSummary {
+  pulseScore: number; // 0 - 100
+  pulseStatus: 'excellent' | 'good' | 'warning' | 'critical';
+  pulseLabel: string;
+  nextBestAction: {
+    entryId: string;
+    title: string;
+    category: string;
+    urgencyText: string;
+    reason: string;
+    remainingSubtasks: number;
+    deadlineText: string;
+  } | null;
+  financialPulse: {
+    safeDailySpend: number;
+    todaySpent: number;
+    spendStatus: 'safe' | 'moderate' | 'overbudget';
+    monthNetSavings: number;
+  };
+  habitStreakPulse: {
+    totalRoutines: number;
+    completedToday: number;
+    pendingRoutineNames: string[];
+  };
+  smartTips: string[];
+}
+```
+
+#### State Mapping & Interactive Controls
+- **Komponen Baru**: `src/components/SmartExecutiveWidget.tsx`
+- **Integrasi di `src/App.tsx`**: Dipasang tepat sebelum grid konten Catatan/Keuangan.
+- **Aksi Cepat Interaktif**:
+  - Klik pada *Next Best Action* langsung melakukan auto-scroll / membuka form edit kegiatan tersebut.
+  - Tombol *"Tandai Rutinitas Selesai"* langsung memperbarui status entitas tanpa perlu membuka form.
+  - Tombol *"Lihat Analisis Rinci"* menampilkan modal penjelasan algoritma skor kesehatan.
