@@ -91,7 +91,7 @@ export function getNextBestAction(entries: ActivityEntry[], now: Date = new Date
 
     // Bobot Subtask tersisa
     const subtasks = entry.courseDetails?.subtasks || [];
-    const incompleteSubtasks = subtasks.filter(s => !s.done).length;
+    const incompleteSubtasks = subtasks.filter(s => !(s.completed ?? s.done)).length;
     score += incompleteSubtasks * 4;
 
     // Alasan cerdas
@@ -350,3 +350,42 @@ export function calculateExecutiveSummary(
     }
   };
 }
+
+/**
+ * Alias untuk getNextBestAction sesuai penamaan pada Class Diagram
+ */
+export const selectNextBestAction = getNextBestAction;
+
+/**
+ * Memberikan rekomendasi blok waktu fokus berdasarkan beban tugas aktif
+ */
+export function getRecommendedFocusBlock(entries: ActivityEntry[]): {
+  recommendedCategory: string;
+  suggestedMinutes: number;
+  rationale: string;
+} {
+  const pending = entries.filter(e => e.status !== 'completed');
+  if (pending.length === 0) {
+    return {
+      recommendedCategory: 'Santai / Reviu',
+      suggestedMinutes: 15,
+      rationale: 'Semua target harian telah terselesaikan dengan baik!'
+    };
+  }
+
+  // Cari kategori paling mendominasi tugas pending
+  const counts: Record<string, number> = {};
+  pending.forEach(p => {
+    counts[p.category] = (counts[p.category] || 0) + 1;
+  });
+
+  const sortedCat = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  const topCat = sortedCat[0]?.[0] || 'kuliah';
+
+  return {
+    recommendedCategory: topCat === 'kuliah' ? 'Tugas Kuliah' : topCat === 'game' ? 'Aktivitas Game' : 'Rutinitas Harian',
+    suggestedMinutes: topCat === 'kuliah' ? 45 : 30,
+    rationale: `Terdapat ${sortedCat[0]?.[1] || 1} kegiatan aktif pada kategori ini.`
+  };
+}
+

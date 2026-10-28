@@ -31,7 +31,7 @@ export async function initDatabase(): Promise<DbStatus> {
       port: MYSQL_PORT,
       user: MYSQL_USER,
       password: MYSQL_PASSWORD,
-      connectTimeout: 2500
+      connectTimeout: 600
     });
 
     await initialConnection.query(`CREATE DATABASE IF NOT EXISTS \`${MYSQL_DATABASE}\` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
@@ -75,7 +75,6 @@ async function createTablesIfNotExist(p: mysql.Pool) {
       \`username\` VARCHAR(100) NOT NULL UNIQUE,
       \`email\` VARCHAR(255) NOT NULL UNIQUE,
       \`name\` VARCHAR(150) NOT NULL,
-      \`photo_url\` TEXT NULL,
       \`created_at\` DATETIME DEFAULT CURRENT_TIMESTAMP,
       PRIMARY KEY (\`id\`)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -453,7 +452,20 @@ function mapRowToActivity(r: any) {
   let subtasks: any[] = [];
   if (r.course_subtasks) {
     try {
-      subtasks = typeof r.course_subtasks === 'string' ? JSON.parse(r.course_subtasks) : r.course_subtasks;
+      const parsed = typeof r.course_subtasks === 'string' ? JSON.parse(r.course_subtasks) : r.course_subtasks;
+      if (Array.isArray(parsed)) {
+        subtasks = parsed.map((st: any, idx: number) => {
+          const itemTitle = st.title || st.text || '';
+          const isCompleted = Boolean(st.completed ?? st.done ?? false);
+          return {
+            id: st.id || `sub_${idx + 1}`,
+            title: itemTitle,
+            completed: isCompleted,
+            text: itemTitle,
+            done: isCompleted
+          };
+        });
+      }
     } catch {}
   }
 

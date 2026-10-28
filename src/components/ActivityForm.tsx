@@ -91,11 +91,16 @@ export default function ActivityForm({
       );
 
       if (Array.isArray(data.subtasks) && data.subtasks.length > 0) {
-        const newTasks: SubTask[] = data.subtasks.map((st, idx) => ({
-          id: `local-${Date.now()}-${idx}`,
-          text: st.text,
-          done: false
-        }));
+        const newTasks: SubTask[] = data.subtasks.map((st, idx) => {
+          const itemTitle = st.text || (st as any).title || '';
+          return {
+            id: `local-${Date.now()}-${idx}`,
+            title: itemTitle,
+            completed: false,
+            text: itemTitle,
+            done: false
+          };
+        });
         setSubtasks(newTasks);
         playSuccessSound();
       }
@@ -177,6 +182,8 @@ export default function ActivityForm({
     if (!newSubtaskText.trim()) return;
     const newTask: SubTask = {
       id: Date.now().toString(),
+      title: newSubtaskText.trim(),
+      completed: false,
       text: newSubtaskText.trim(),
       done: false
     };
@@ -185,7 +192,11 @@ export default function ActivityForm({
   };
 
   const handleToggleSubtask = (id: string) => {
-    setSubtasks(subtasks.map(t => t.id === id ? { ...t, done: !t.done } : t));
+    setSubtasks(subtasks.map(t => t.id === id ? { 
+      ...t, 
+      completed: !(t.completed ?? t.done), 
+      done: !(t.completed ?? t.done) 
+    } : t));
   };
 
   const handleRemoveSubtask = (id: string) => {
@@ -544,12 +555,12 @@ export default function ActivityForm({
                         <label className="flex items-center gap-2 cursor-pointer select-none flex-1">
                           <input
                             type="checkbox"
-                            checked={task.done}
+                            checked={task.completed ?? task.done}
                             onChange={() => handleToggleSubtask(task.id)}
                             className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
                           />
-                          <span className={task.done ? 'line-through text-slate-400' : 'text-slate-700 font-medium'}>
-                            {task.text}
+                          <span className={(task.completed ?? task.done) ? 'line-through text-slate-400' : 'text-slate-700 font-medium'}>
+                            {task.title || task.text}
                           </span>
                         </label>
                         <button

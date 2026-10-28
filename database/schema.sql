@@ -30,7 +30,6 @@ CREATE TABLE `users` (
   `username` VARCHAR(100) NOT NULL UNIQUE,
   `email` VARCHAR(255) NOT NULL UNIQUE,
   `name` VARCHAR(150) NOT NULL,
-  `photo_url` TEXT NULL,
   `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

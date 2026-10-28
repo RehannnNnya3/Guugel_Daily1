@@ -62,3 +62,11 @@ Untuk menjalankan aplikasi ini secara online 24/7 di internet:
 1. **Platform Backend & Frontend**: Hubungkan repo GitHub ini ke [Render](https://render.com/) atau [Railway](https://railway.app/).
 2. **Database Cloud Gratis**: Buat database MySQL gratis di [Aiven](https://aiven.io/), [Clever Cloud](https://clever-cloud.com/), atau [TiDB Cloud](https://tidbcloud.com/).
 3. Masukkan `DATABASE_URL` atau konfigurasi MySQL Host ke Environment Variables di dashboard hosting Anda.
+
+---
+
+## 📐 Arsitektur Sistem & Class Diagram
+
+- **Spesifikasi Class Diagram (Mermaid & Draw.io)**: Tersedia di [docs/CLASS_DIAGRAM.md](docs/CLASS_DIAGRAM.md).
+- **Implementasi OOP (Domain Models)**: Tersedia di folder `src/models/` (`User`, `Activity`, `Subtask`, `FinanceTransaction`, `Account`, `SmartEngine`).
+

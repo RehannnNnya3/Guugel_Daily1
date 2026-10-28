@@ -1,9 +1,20 @@
 export type Urgency = 'low' | 'medium' | 'high' | 'urgent';
 
+export interface User {
+  id: string;
+  username: string;
+  email: string;
+  name: string;
+  createdAt: string;
+}
+
 export interface SubTask {
   id: string;
-  text: string;
-  done: boolean;
+  title: string;
+  completed: boolean;
+  /** Backward-compatible aliases */
+  text?: string;
+  done?: boolean;
 }
 
 export interface ActivityEntry {

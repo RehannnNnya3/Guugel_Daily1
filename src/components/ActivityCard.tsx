@@ -141,7 +141,7 @@ export default function ActivityCard({
   // Progress computation for College Subtasks
   const collegeProgress = () => {
     if (!entry.courseDetails?.subtasks || entry.courseDetails.subtasks.length === 0) return 0;
-    const finished = entry.courseDetails.subtasks.filter(t => t.done).length;
+    const finished = entry.courseDetails.subtasks.filter(t => t.completed ?? t.done).length;
     return Math.round((finished / entry.courseDetails.subtasks.length) * 100);
   };
 
@@ -273,11 +273,11 @@ export default function ActivityCard({
                   <div key={t.id} className="flex items-center gap-1.5">
                     <input
                       type="checkbox"
-                      checked={t.done}
+                      checked={t.completed ?? t.done}
                       onChange={() => onToggleSubtask && onToggleSubtask(entry.id, t.id)}
                       className="rounded border-blue-300 text-blue-600 h-3 w-3"
                     />
-                    <span className={t.done ? 'line-through text-blue-400' : ''}>{t.text}</span>
+                    <span className={(t.completed ?? t.done) ? 'line-through text-blue-400' : ''}>{t.title || t.text}</span>
                   </div>
                 ))}
                 {entry.courseDetails.subtasks.length > 2 && (
@@ -333,11 +333,11 @@ export default function ActivityCard({
                 <div key={t.id} className="flex items-center gap-2 py-0.5">
                   <input
                     type="checkbox"
-                    checked={t.done}
+                    checked={t.completed ?? t.done}
                     onChange={() => onToggleSubtask && onToggleSubtask(entry.id, t.id)}
                     className="rounded border-blue-300 text-blue-600 h-3.5 w-3.5 cursor-pointer"
                   />
-                  <span className={t.done ? 'line-through text-blue-400' : 'text-blue-800'}>{t.text}</span>
+                  <span className={(t.completed ?? t.done) ? 'line-through text-blue-400' : 'text-blue-800'}>{t.title || t.text}</span>
                 </div>
               ))}
             </motion.div>

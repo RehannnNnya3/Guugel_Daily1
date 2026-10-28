@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { ActivityEntry, SyncStatus, Urgency, FinanceEntry, CustomAccount, FinanceCategoryMap } from './types.ts';
+import { ActivityEntry, SubTask, SyncStatus, Urgency, FinanceEntry, CustomAccount, FinanceCategoryMap } from './types.ts';
 import ActivityForm from './components/ActivityForm.tsx';
 import ActivityCard from './components/ActivityCard.tsx';
 import NotificationToast from './components/NotificationToast.tsx';
@@ -703,8 +703,10 @@ export default function App() {
       );
 
       if (Array.isArray(data.subtasks) && data.subtasks.length > 0) {
-        const newSubtasks = data.subtasks.map((st, idx) => ({
+        const newSubtasks: SubTask[] = data.subtasks.map((st, idx) => ({
           id: `local-${Date.now()}-${idx}`,
+          title: st.text,
+          completed: false,
           text: st.text,
           done: false
         }));

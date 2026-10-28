@@ -17,7 +17,27 @@ import {
   saveUserSettings 
 } from "./src/server/db.ts";
 
-const PORT = Number(process.env.PORT) || 3000;
+// In AI Studio, nginx listens on 8080 and proxies incoming traffic to port 3000
+function getListenConfig() {
+  const args = process.argv.slice(2);
+  let port = 3000;
+  let host = "0.0.0.0";
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--port" && args[i + 1]) {
+      const p = parseInt(args[i + 1], 10);
+      if (!isNaN(p) && p !== 8080) {
+        port = p;
+      }
+      i++;
+    } else if (args[i] === "--host" && args[i + 1]) {
+      host = args[i + 1];
+      i++;
+    }
+  }
+  return { port, host };
+}
+
+const { port: PORT, host: HOST } = getListenConfig();
 const DB_FILE_PATH = path.join(process.cwd(), "sync_db.json");
 
 const ai = new GoogleGenAI({
@@ -59,6 +79,11 @@ async function startServer() {
 
   // Parse JSON bodies
   app.use(express.json({ limit: "20mb" }));
+
+  // API Route: Health check for readiness
+  app.get("/api/health", (_req, res) => {
+    res.json({ status: "ok", port: PORT, timestamp: new Date().toISOString() });
+  });
 
   // API Route: Database connection status (MySQL / phpMyAdmin info)
   app.get("/api/database/status", (req, res) => {
@@ -174,8 +199,7 @@ async function startServer() {
     const user = {
       uid: "local_user",
       email: email || "user@local.db",
-      displayName: name || (email ? email.split("@")[0] : "Pengguna Lokal"),
-      photoURL: null
+      displayName: name || (email ? email.split("@")[0] : "Pengguna Lokal")
     };
     res.json({ success: true, user });
   });
@@ -184,8 +208,7 @@ async function startServer() {
     res.json({
       uid: "local_user",
       email: "user@local.db",
-      displayName: "Pengguna Lokal",
-      photoURL: null
+      displayName: "Pengguna Lokal"
     });
   });
 
@@ -442,16 +465,45 @@ Evaluasi kesehatan keuangan pengguna:
   } else {
     console.log(`Starting server in DEVELOPMENT / ON-DEMAND mode on port ${PORT}...`);
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: { 
+        middlewareMode: true,
+        hmr: false
+      },
       appType: "spa",
     });
     app.use(vite.middlewares);
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server is listening on http://0.0.0.0:${PORT}`);
+  const server = app.listen(PORT, HOST, () => {
+    console.log(`Server is listening on http://${HOST}:${PORT}`);
   });
+
+  server.on("error", (err: any) => {
+    if (err.code === "EADDRINUSE") {
+      console.warn(`Port ${PORT} in use, waiting for release...`);
+    } else {
+      console.error("Server error:", err);
+    }
+  });
+
+  const handleShutdown = () => {
+    server.close(() => {
+      console.log("Server shut down cleanly.");
+      process.exit(0);
+    });
+  };
+
+  process.on("SIGINT", handleShutdown);
+  process.on("SIGTERM", handleShutdown);
 }
+
+process.on("uncaughtException", (err) => {
+  console.error("Uncaught exception in server process:", err);
+});
+
+process.on("unhandledRejection", (reason) => {
+  console.error("Unhandled promise rejection:", reason);
+});
 
 startServer().catch((err) => {
   console.error("Critical server failure:", err);
